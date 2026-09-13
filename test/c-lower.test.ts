@@ -24,7 +24,7 @@ test("hello.c is int main that prints hello and includes stdio", async () => {
   const program = await parseFile("hello.c");
   const code = allCode(program);
   assert.ok(program.stats.scripts >= 1);
-  assert.match(code, /when \[int v\] main clicked|int main/);
+  assert.match(code, /when @greenFlag \[int v\] main|int main/);
   assert.match(code, /Hello, world!/);
   assert.match(code, /#include \[stdio\.h v\]/);
 });
@@ -52,7 +52,7 @@ test("greet.c emits C function hats for helpers and main", async () => {
   const code = allCode(program);
   assert.match(code, /greet/);
   assert.match(code, /add/);
-  assert.match(code, /when \[int v\] main clicked|int main/);
+  assert.match(code, /when @greenFlag \[int v\] main|int main/);
 });
 
 test("toolbox is C syntax groups, not Scratch motion/sound", async () => {
@@ -64,7 +64,7 @@ test("toolbox is C syntax groups, not Scratch motion/sound", async () => {
   assert.ok(ids.includes("extension"));
   assert.ok(!ids.includes("motion"));
   assert.ok(!ids.includes("sound"));
-  assert.ok(labels.includes("Preproc") || labels.includes("Functions"));
+  assert.ok(labels.includes("Pre") || labels.includes("Func") || labels.includes("Functions"));
   const preproc = program.toolbox.find((c) => c.id === "extension");
   const includeCount = preproc?.blocks.filter((b) => b.opcode === "c.include").length ?? 0;
   assert.equal(includeCount, 1);

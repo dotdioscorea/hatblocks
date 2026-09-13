@@ -35,7 +35,9 @@ export function hatLine(
     .map((p) => `( [${cleanType(p.type)} v] ${cleanIdent(p.name)} )`)
     .join(" ");
   if (kind === "when") {
-    return args ? `when ${ret} ${cleanIdent(name)} ${args} clicked` : `when ${ret} ${cleanIdent(name)} clicked`;
+    return args
+      ? `when @greenFlag ${ret} ${cleanIdent(name)} ${args}`
+      : `when @greenFlag ${ret} ${cleanIdent(name)}`;
   }
   return args ? `define ${ret} ${cleanIdent(name)} ${args}` : `define ${ret} ${cleanIdent(name)}`;
 }

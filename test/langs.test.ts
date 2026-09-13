@@ -17,7 +17,7 @@ test("python hello.py lowers defs and print", async () => {
   const code = emitProgram(program).map((s) => s.code).join("\n");
   assert.ok(program.stats.scripts >= 1);
   assert.match(code, /define/);
-  assert.match(code, /greet|print|when file clicked/);
+  assert.match(code, /greet|print|when @greenFlag file|when file/);
 });
 
 test("cpp hello.cpp parses as cpp with a main hat", async () => {

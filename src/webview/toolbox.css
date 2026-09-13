@@ -34,7 +34,7 @@ html, body {
 }
 .body { flex: 1; display: flex; min-height: 0; }
 .rail {
-  width: 52px;
+  width: 56px;
   overflow: auto;
   border-right: 1px solid var(--vscode-sideBar-border, transparent);
   padding: 6px 0;

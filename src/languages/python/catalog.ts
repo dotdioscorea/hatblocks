@@ -18,7 +18,7 @@ export interface OpcodeDef {
 export const PY_CATALOG: OpcodeDef[] = [
   { opcode: "py.import", shape: "stack", category: "extension", line: "import [{module} v]", fields: { module: "sys" } },
   { opcode: "py.importFrom", shape: "stack", category: "extension", line: "from [{module} v] import [{name} v]", fields: { module: "os", name: "path" } },
-  { opcode: "events.flag", shape: "hat", category: "custom", line: "when file clicked" },
+  { opcode: "events.flag", shape: "hat", category: "custom", line: "when @greenFlag file" },
   { opcode: "custom.define", shape: "hat", category: "custom", line: "define {name}", fields: { name: "fn" } },
   { opcode: "py.class", shape: "c", category: "custom", line: "class [{name} v]:", fields: { name: "C" }, branchSlots: ["body"], closer: "end" },
   { opcode: "control.if", shape: "c", category: "control", line: "if {condition} then", valueSlots: ["condition"], branchSlots: ["body"] },

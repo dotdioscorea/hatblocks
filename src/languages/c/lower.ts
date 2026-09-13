@@ -160,12 +160,6 @@ class CLowerer {
   private buildToolbox() {
     const id = createIdFactory("tb");
     const extras: Block[] = [];
-    for (const name of this.variables) {
-      extras.push(
-        this.block("data.get", { fields: { var: name } }),
-        this.block("data.set", { fields: { var: name }, values: { value: litEmpty() } }),
-      );
-    }
     for (const fn of this.functionNames) {
       extras.push(
         this.block("custom.call", {

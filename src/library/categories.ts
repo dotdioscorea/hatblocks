@@ -8,13 +8,13 @@ export interface CategoryMeta {
 
 /** C-first palette. Shapes stay Scratch; labels and groups follow the language. */
 export const CATEGORIES: CategoryMeta[] = [
-  { id: "extension", label: "Preproc", color: "#0FBD8C" },
-  { id: "custom", label: "Functions", color: "#FF6680" },
-  { id: "control", label: "Control", color: "#FFAB19" },
-  { id: "operators", label: "Operators", color: "#59C059" },
-  { id: "variables", label: "Variables", color: "#FF8C1A" },
-  { id: "lists", label: "Arrays", color: "#FF661A" },
-  { id: "sensing", label: "Pointers", color: "#5CB1D6" },
+  { id: "extension", label: "Pre", color: "#0FBD8C" },
+  { id: "custom", label: "Func", color: "#FF6680" },
+  { id: "control", label: "Ctrl", color: "#FFAB19" },
+  { id: "operators", label: "Ops", color: "#59C059" },
+  { id: "variables", label: "Vars", color: "#FF8C1A" },
+  { id: "lists", label: "Arr", color: "#FF661A" },
+  { id: "sensing", label: "Ptr", color: "#5CB1D6" },
   { id: "looks", label: "I/O", color: "#9966FF" },
   { id: "events", label: "Events", color: "#FFBF00" },
   { id: "motion", label: "Motion", color: "#4C97FF" },

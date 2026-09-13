@@ -32,7 +32,7 @@ export const CATALOG: OpcodeDef[] = [
   },
 
   // Functions
-  { opcode: "events.flag", shape: "hat", category: "custom", line: "when [int v] main clicked" },
+  { opcode: "events.flag", shape: "hat", category: "custom", line: "when @greenFlag [int v] main" },
   {
     opcode: "custom.define",
     shape: "hat",
@@ -40,8 +40,8 @@ export const CATALOG: OpcodeDef[] = [
     line: "define [void v] fn",
     fields: { name: "fn", returnType: "void" },
   },
-  { opcode: "custom.call", shape: "stack", category: "custom", line: "{name} :: custom", fields: { name: "fn" } },
-  { opcode: "custom.reporter", shape: "reporter", category: "custom", line: "{name} :: custom", fields: { name: "fn" } },
+  { opcode: "custom.call", shape: "stack", category: "custom", line: "{name} :: custom", fields: { name: "fn" }, hidden: true },
+  { opcode: "custom.reporter", shape: "reporter", category: "custom", line: "{name} :: custom", fields: { name: "fn" }, hidden: true },
   { opcode: "control.report", shape: "cap", category: "custom", line: "return {value};", valueSlots: ["value"] },
   { opcode: "control.stop", shape: "cap", category: "custom", line: "return;" },
   { opcode: "control.stopAll", shape: "cap", category: "custom", line: "exit {value};", valueSlots: ["value"] },
