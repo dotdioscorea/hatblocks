@@ -1,0 +1,17 @@
+.vscode/**
+src/**
+test/**
+scripts/**
+node_modules/**
+!node_modules/web-tree-sitter/**
+esbuild.mjs
+tsconfig.json
+**/*.map
+**/*.ts
+.github/**
+!dist/**
+!wasm/**
+!media/**
+!examples/**
+!README.md
+!LICENSE

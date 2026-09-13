@@ -1,0 +1,157 @@
+{
+  "name": "hatblocks",
+  "displayName": "Hatblocks",
+  "description": "Edit C as Scratch-style blocks inside VS Code. Not affiliated with Scratch or the Scratch Foundation.",
+  "version": "0.1.0",
+  "publisher": "dotdioscorea",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dotdioscorea/hatblocks"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization",
+    "Education"
+  ],
+  "keywords": [
+    "scratch",
+    "blocks",
+    "c",
+    "visual",
+    "hatblocks"
+  ],
+  "activationEvents": [
+    "onLanguage:c",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "media/icon.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "hatblocks.toggleMode",
+        "title": "Toggle Blocks Mode",
+        "category": "Hatblocks"
+      },
+      {
+        "command": "hatblocks.run",
+        "title": "Green Flag: Run",
+        "category": "Hatblocks",
+        "icon": {
+          "light": "media/flag.svg",
+          "dark": "media/flag.svg"
+        }
+      },
+      {
+        "command": "hatblocks.exportPng",
+        "title": "Export Stage as PNG",
+        "category": "Hatblocks"
+      },
+      {
+        "command": "hatblocks.openDemo",
+        "title": "Open C Demo",
+        "category": "Hatblocks"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "hatblocks.toggleMode",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "hatblocks.run",
+          "when": "resourceLangId == c || activeCustomEditorId == hatblocks.editor",
+          "group": "navigation@0"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "hatblocks.toggleMode",
+          "when": "resourceLangId == c || activeCustomEditorId == hatblocks.editor",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "hatblocks.exportPng",
+          "when": "hatblocks.editorFocus || activeCustomEditorId == hatblocks.editor"
+        }
+      ]
+    },
+    "customEditors": [
+      {
+        "viewType": "hatblocks.editor",
+        "displayName": "Hatblocks",
+        "selector": [
+          { "filenamePattern": "*.c" },
+          { "filenamePattern": "*.h" }
+        ],
+        "priority": "option"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "hatblocks",
+          "title": "Hatblocks",
+          "icon": "media/activitybar.svg"
+        }
+      ]
+    },
+    "views": {
+      "hatblocks": [
+        {
+          "type": "webview",
+          "id": "hatblocks.toolbox",
+          "name": "Blocks"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Hatblocks",
+      "properties": {
+        "hatblocks.blocksMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open C files as Hatblocks instead of text. Toggles every matching editor."
+        },
+        "hatblocks.maxBlocks": {
+          "type": "number",
+          "default": 2500,
+          "minimum": 50,
+          "description": "Stop lowering after this many blocks so huge files cannot freeze the editor."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "copy-wasm": "node scripts/copy-wasm.mjs",
+    "compile": "npm run copy-wasm && node esbuild.mjs",
+    "watch": "npm run copy-wasm && node esbuild.mjs --watch",
+    "test": "npm run copy-wasm && tsx --test test/*.test.ts",
+    "cli": "npm run compile && node dist/cli.js",
+    "vscode:prepublish": "npm run compile",
+    "postinstall": "node scripts/copy-wasm.mjs"
+  },
+  "dependencies": {
+    "scratchblocks": "^3.6.4",
+    "tree-sitter-wasms": "^0.1.12",
+    "web-tree-sitter": "0.25.10"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/vscode": "^1.90.0",
+    "esbuild": "^0.25.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
