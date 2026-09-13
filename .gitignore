@@ -1,0 +1,7 @@
+node_modules/
+dist/
+wasm/
+test/preview/
+*.vsix
+.DS_Store
+*.tsbuildinfo
