@@ -9,6 +9,8 @@ mkdirSync(dest, { recursive: true });
 const files = [
   ["node_modules/web-tree-sitter/tree-sitter.wasm", "tree-sitter.wasm"],
   ["node_modules/tree-sitter-wasms/out/tree-sitter-c.wasm", "tree-sitter-c.wasm"],
+  ["node_modules/tree-sitter-wasms/out/tree-sitter-cpp.wasm", "tree-sitter-cpp.wasm"],
+  ["node_modules/tree-sitter-wasms/out/tree-sitter-python.wasm", "tree-sitter-python.wasm"],
 ];
 
 for (const [fromRel, name] of files) {

@@ -80,7 +80,8 @@ function render(): void {
   }
   const h = document.createElement("h2");
   h.textContent = cat.label;
-  h.style.color = cat.color;
+  h.style.borderLeft = `4px solid ${cat.color}`;
+  h.style.paddingLeft = "8px";
   flyout.appendChild(h);
   const hint = document.createElement("div");
   hint.className = "hint";

@@ -1,19 +1,25 @@
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { cAdapter } from "./languages/c/adapter";
+import { adapterFor } from "./languages/registry";
 import { emitProgram } from "./emit/scratchblocks";
 
 async function main(): Promise<void> {
   const file = process.argv[2];
   if (!file) {
-    console.error("usage: node dist/cli.js <file.c>");
+    console.error("usage: node dist/cli.js <file.c|cpp|py>");
     process.exit(1);
   }
   const abs = resolve(file);
   const source = readFileSync(abs, "utf8");
   const wasmDir = join(__dirname, "..", "wasm");
-  const program = await cAdapter.parse(source, {
-    fileName: basename(abs),
+  const name = basename(abs);
+  const adapter = adapterFor({ languageId: "", fileName: name });
+  if (!adapter) {
+    console.error(`no language adapter for ${name}`);
+    process.exit(1);
+  }
+  const program = await adapter.parse(source, {
+    fileName: name,
     wasmDir,
     maxBlocks: 2500,
   });

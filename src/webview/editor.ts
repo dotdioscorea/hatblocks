@@ -3,6 +3,7 @@ import { emitProgram } from "../emit/scratchblocks";
 import { cloneBlock, lastBlock } from "../ir/clone";
 import { createIdFactory, recomputeStats } from "../ir/ids";
 import { isLiteral } from "../ir/builders";
+import { rebuildHat } from "../library/hats";
 import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
@@ -145,7 +146,13 @@ function packVertically(): void {
     return;
   }
   let y = 12;
-  for (const script of program.sprites[0].scripts) {
+  const scripts = [...program.sprites[0].scripts].sort((a, b) => {
+    const la = a.root.source?.start.line ?? 1e9;
+    const lb = b.root.source?.start.line ?? 1e9;
+    return la - lb;
+  });
+  program.sprites[0].scripts = scripts;
+  for (const script of scripts) {
     const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
     script.x = 12;
     script.y = y;
@@ -176,24 +183,63 @@ function renderScripts(): void {
   renderGutter();
 }
 
+const HAT_H = 42;
+const STACK_H = 36;
+const C_HEAD = 38;
+const C_ELSE = 22;
+const C_FOOT = 18;
+
+function layoutMarks(block: Block | undefined, y: number, marks: { line?: number; y: number }[]): number {
+  let cursor = y;
+  while (block) {
+    if (block.shape !== "reporter" && block.shape !== "boolean") {
+      marks.push({
+        line: block.source ? block.source.start.line + 1 : undefined,
+        y: cursor,
+      });
+    }
+    if (block.shape === "c" || block.shape === "c2") {
+      let inner = cursor + C_HEAD;
+      inner = layoutMarks(block.branches.body, inner, marks);
+      if (block.shape === "c2") {
+        inner += C_ELSE;
+        inner = layoutMarks(block.branches.else, inner, marks);
+      }
+      cursor = inner + C_FOOT;
+    } else {
+      cursor += block.shape === "hat" ? HAT_H : STACK_H;
+    }
+    block = block.next;
+  }
+  return cursor;
+}
+
 function renderGutter(): void {
   if (!program) {
     gutter.innerHTML = "";
     return;
   }
   gutter.innerHTML = "";
+  const seen = new Set<number>();
   for (const script of program.sprites[0].scripts) {
-    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
-    const line = script.root.source ? script.root.source.start.line + 1 : undefined;
-    const n = document.createElement("div");
-    n.className = `ln${script.id === selectedId ? " active" : ""}${line === undefined ? " empty" : ""}`;
-    n.textContent = line !== undefined ? String(line) : "·";
-    n.title = line !== undefined ? `Line ${line}` : "Not in source yet";
-    const top = panY + script.y * zoom;
-    n.style.top = `${top}px`;
-    n.style.height = `${Math.max(18, (el?.offsetHeight ?? 24) * zoom)}px`;
-    n.style.paddingTop = `${Math.max(0, 4 * zoom)}px`;
-    gutter.appendChild(n);
+    const marks: { line?: number; y: number }[] = [];
+    layoutMarks(script.root, 0, marks);
+    for (const mark of marks) {
+      if (mark.line !== undefined && seen.has(mark.line)) {
+        continue;
+      }
+      if (mark.line !== undefined) {
+        seen.add(mark.line);
+      }
+      const n = document.createElement("div");
+      n.className = `ln${script.id === selectedId ? " active" : ""}${mark.line === undefined ? " empty" : ""}`;
+      n.textContent = mark.line !== undefined ? String(mark.line) : "·";
+      n.title = mark.line !== undefined ? `Line ${mark.line}` : "Not in source yet";
+      n.style.top = `${panY + (script.y + mark.y) * zoom}px`;
+      n.style.height = `${Math.max(16, STACK_H * zoom)}px`;
+      n.style.paddingTop = `${Math.max(0, 2 * zoom)}px`;
+      gutter.appendChild(n);
+    }
   }
 }
 
@@ -361,6 +407,12 @@ function editScript(scriptId: string): void {
       return;
     }
     field.block.fields[field.key] = next;
+    if (field.key === "returnType" || field.key === "name" || field.block.params) {
+      rebuildHat(field.block);
+    }
+    if (field.key === "type" && field.block.opcode === "data.set") {
+      field.block.line = `[${next} v] ${field.block.fields.var ?? "x"} = {value} :: variables`;
+    }
     commit();
     return;
   }
@@ -384,7 +436,7 @@ function editScript(scriptId: string): void {
 }
 
 function firstEditableField(block: Block): { block: Block; key: string } | undefined {
-  const keys = ["header", "var", "name", "msg", "label", "what"];
+  const keys = ["returnType", "type", "header", "var", "name", "msg", "label", "what"];
   let current: Block | undefined = block;
   while (current) {
     for (const key of keys) {

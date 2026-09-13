@@ -3,11 +3,11 @@ import { adapterFor } from "./languages/registry";
 
 export const EDITOR_VIEW_TYPE = "hatblocks.editor";
 
-const ASSOCIATIONS = ["*.c", "*.h"] as const;
+const ASSOCIATIONS = ["*.c", "*.h", "*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.py"] as const;
 
 export function isSupportedUri(uri: vscode.Uri): boolean {
   const name = uri.fsPath.toLowerCase();
-  return name.endsWith(".c") || name.endsWith(".h");
+  return ASSOCIATIONS.some((pat) => name.endsWith(pat.slice(1)));
 }
 
 export function isSupportedDocument(doc: { languageId: string; fileName: string }): boolean {

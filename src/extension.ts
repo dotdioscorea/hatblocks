@@ -75,7 +75,7 @@ export function deactivate(): void {}
 
 async function activeCDocument(): Promise<vscode.TextDocument | undefined> {
   const active = vscode.window.activeTextEditor?.document;
-  if (active && (active.languageId === "c" || active.fileName.endsWith(".c") || active.fileName.endsWith(".h"))) {
+  if (active && ["c", "cpp", "python"].includes(active.languageId)) {
     return active;
   }
   const tab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;

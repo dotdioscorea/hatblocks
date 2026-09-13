@@ -7,21 +7,31 @@ export async function runCDocument(document: vscode.TextDocument): Promise<void>
   if (document.isDirty) {
     await document.save();
   }
-  const compiler = await findCompiler();
-  if (!compiler) {
-    void vscode.window.showErrorMessage("Hatblocks needs clang or gcc on PATH to run the green flag.");
-    return;
-  }
-  const out = join(tmpdir(), `hatblocks-${hash(document.uri.fsPath)}`);
-  const quotedSrc = quote(document.uri.fsPath);
-  const quotedOut = quote(out);
+  const src = quote(document.uri.fsPath);
   const term = vscode.window.createTerminal({ name: "Hatblocks" });
   term.show(true);
-  term.sendText(`${quote(compiler)} -std=c11 -O0 -o ${quotedOut} ${quotedSrc} && ${quotedOut}`);
+  if (document.languageId === "python" || document.fileName.endsWith(".py")) {
+    term.sendText(`python3 ${src}`);
+    return;
+  }
+  const isCpp =
+    document.languageId === "cpp" ||
+    /\.(cpp|cc|cxx|hpp|hh)$/i.test(document.fileName);
+  const compiler = await findCompiler(isCpp);
+  if (!compiler) {
+    void vscode.window.showErrorMessage(
+      isCpp ? "Hatblocks needs clang++ or g++ on PATH." : "Hatblocks needs clang or gcc on PATH.",
+    );
+    return;
+  }
+  const out = quote(join(tmpdir(), `hatblocks-${hash(document.uri.fsPath)}`));
+  const std = isCpp ? "-std=c++17" : "-std=c11";
+  term.sendText(`${quote(compiler)} ${std} -O0 -o ${out} ${src} && ${out}`);
 }
 
-async function findCompiler(): Promise<string | undefined> {
-  for (const cmd of ["clang", "gcc", "cc"]) {
+async function findCompiler(cpp: boolean): Promise<string | undefined> {
+  const cmds = cpp ? ["clang++", "g++"] : ["clang", "gcc", "cc"];
+  for (const cmd of cmds) {
     if (await existsOnPath(cmd)) {
       return cmd;
     }

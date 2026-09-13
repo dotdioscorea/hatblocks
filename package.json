@@ -73,14 +73,14 @@
       "editor/title/run": [
         {
           "command": "hatblocks.run",
-          "when": "resourceLangId == c || activeCustomEditorId == hatblocks.editor",
+          "when": "resourceLangId == c || resourceLangId == cpp || resourceLangId == python || activeCustomEditorId == hatblocks.editor",
           "group": "navigation@0"
         }
       ],
       "editor/title": [
         {
           "command": "hatblocks.toggleMode",
-          "when": "resourceLangId == c || activeCustomEditorId == hatblocks.editor",
+          "when": "resourceLangId == c || resourceLangId == cpp || resourceLangId == python || activeCustomEditorId == hatblocks.editor",
           "group": "navigation"
         }
       ],
@@ -97,7 +97,13 @@
         "displayName": "Hatblocks",
         "selector": [
           { "filenamePattern": "*.c" },
-          { "filenamePattern": "*.h" }
+          { "filenamePattern": "*.h" },
+          { "filenamePattern": "*.cpp" },
+          { "filenamePattern": "*.cc" },
+          { "filenamePattern": "*.cxx" },
+          { "filenamePattern": "*.hpp" },
+          { "filenamePattern": "*.hh" },
+          { "filenamePattern": "*.py" }
         ],
         "priority": "option"
       }

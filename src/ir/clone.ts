@@ -10,6 +10,7 @@ export function cloneBlock(block: Block, id = createIdFactory("n")): Block {
     values: {},
     branches: {},
     extraArgs: block.extraArgs?.map((a) => cloneValue(a, id)),
+    params: block.params?.map((p) => ({ ...p })),
     next: block.next ? cloneBlock(block.next, id) : undefined,
   };
   for (const [k, v] of Object.entries(block.values)) {

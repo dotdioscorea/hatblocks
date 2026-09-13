@@ -3,6 +3,7 @@ import { makeBlock, litEmpty, litNumber, litString, isLiteral } from "../../ir/b
 import { chain, countBlocks, createIdFactory, type IdFactory } from "../../ir/ids";
 import type { Block, Diagnostic, Literal, Program, Script, SourceSpan } from "../../ir/types";
 import { CATALOG, defaultToolbox, groupToolbox } from "../../library/catalog";
+import { hatLine } from "../../library/hats";
 import { headerName, IO_ASK, IO_SAY, stripCString, VOID_CALLEES } from "./builtins";
 
 const BINARY_OPS: Record<string, string> = {
@@ -195,8 +196,7 @@ class CLowerer {
       return undefined;
     }
     const info = functionInfo(declarator);
-    this.functionNames.push(info);
-    const params = info.params;
+    this.functionNames.push({ name: info.name, params: info.params.map((p) => p.name) });
     const bodyHead = body ? this.lowerStatement(body) : undefined;
     const isMain = info.name === "main";
     const ret = collapse(typeNode?.text ?? "int");
@@ -207,9 +207,11 @@ class CLowerer {
         })
       : this.block("custom.define", {
           source: spanOf(node),
-          fields: { name: info.name, signature: signature(info.name, params) },
         });
-    hat.line = isMain ? `${ret} main` : `${ret} ${signature(info.name, params)}`;
+    hat.fields.name = info.name;
+    hat.fields.returnType = ret;
+    hat.params = info.params;
+    hat.line = hatLine(isMain ? "when" : "define", ret, info.name, info.params);
     if (isMain) {
       hat.comment = "__main__";
     }
@@ -277,12 +279,14 @@ class CLowerer {
       this.variables.add(name);
       const valueNode = init?.childForFieldName("value");
       const value = valueNode ? this.lowerExpr(valueNode) : litEmpty();
+      const stars = countPointerStars(inner);
+      const fullType = `${typeText}${"*".repeat(stars)}`.replace(/\s+\*/g, "*");
       const set = this.block("data.set", {
-        fields: { var: name },
+        fields: { var: name, type: fullType },
         values: { value },
         source: spanOf(decl),
-        comment: typeText,
       });
+      set.line = `[${fullType} v] ${name} = {value} :: variables`;
       blocks.push(set);
     }
     return blocks;
@@ -533,19 +537,12 @@ class CLowerer {
   }
 
   private lowerReturn(node: Node): Block {
-    const expr = named(node)[0];
-    if (!expr) {
+    const exprNode = named(node)[0];
+    if (!exprNode) {
       return this.block("control.stop", { source: spanOf(node) });
     }
-    if (expr.type === "number_literal") {
-      const n = Number(expr.text);
-      if (n === 0) {
-        return this.block("control.stop", { source: spanOf(node) });
-      }
-      return this.block("control.stopAll", { source: spanOf(node), comment: `exit ${expr.text}` });
-    }
     return this.block("control.report", {
-      values: { value: this.lowerExpr(expr) },
+      values: { value: this.lowerExpr(exprNode) },
       source: spanOf(node),
     });
   }
@@ -982,7 +979,7 @@ function declaratorName(node: Node | null): string | undefined {
   return inner ? declaratorName(inner) : undefined;
 }
 
-function functionInfo(declarator: Node): { name: string; params: string[] } {
+function functionInfo(declarator: Node): { name: string; params: { type: string; name: string }[] } {
   let d: Node | null = declarator;
   while (d && d.type !== "function_declarator") {
     d = d.childForFieldName("declarator") ?? named(d)[0] ?? null;
@@ -992,13 +989,15 @@ function functionInfo(declarator: Node): { name: string; params: string[] } {
   }
   const name = declaratorName(d.childForFieldName("declarator")) ?? "fn";
   const paramsNode = d.childForFieldName("parameters");
-  const params: string[] = [];
+  const params: { type: string; name: string }[] = [];
   if (paramsNode) {
     for (const p of named(paramsNode)) {
       if (p.type === "parameter_declaration") {
         const n = declaratorName(p.childForFieldName("declarator"));
         if (n && n !== "void") {
-          params.push(n);
+          const typeText = collapse(p.childForFieldName("type")?.text ?? "int");
+          const stars = countPointerStars(p.childForFieldName("declarator"));
+          params.push({ type: `${typeText}${"*".repeat(stars)}`.replace(/\s+\*/g, "*"), name: n });
         }
       }
     }
@@ -1006,11 +1005,14 @@ function functionInfo(declarator: Node): { name: string; params: string[] } {
   return { name, params };
 }
 
-function signature(name: string, params: string[]): string {
-  if (params.length === 0) {
-    return name;
+function countPointerStars(node: Node | null): number {
+  let n = 0;
+  let d = node;
+  while (d && (d.type === "pointer_declarator" || d.type === "abstract_pointer_declarator")) {
+    n += 1;
+    d = d.childForFieldName("declarator") ?? named(d)[0] ?? null;
   }
-  return `${name} ${params.map((p) => `(${p})`).join(" ")}`;
+  return n;
 }
 
 function tail(block: Block): Block {

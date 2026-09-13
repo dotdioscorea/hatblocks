@@ -40,7 +40,14 @@ export function emitC(program: Program): string {
     for (const script of sprite.scripts) {
       const hat = script.root;
       if (hat.opcode === "events.flag") {
-        mainFn = emitFunction("main", [], hat.next, { needed, isMain: true, returnType: "int" });
+        const ret = hat.fields.returnType || "int";
+        const plist = (hat.params ?? []).map((p) => `${p.type} ${p.name}`).join(", ");
+        mainFn = emitFunction(hat.fields.name || "main", hat.params?.map((p) => p.name) ?? [], hat.next, {
+          needed,
+          isMain: true,
+          returnType: ret,
+          paramList: plist || "void",
+        });
       } else if (hat.opcode === "custom.define") {
         functions.push(emitDefined(hat, needed));
       } else if (hat.opcode === "control.label") {
@@ -101,10 +108,17 @@ function harvestTopLevel(
 
 function emitDefined(hat: Block, needed: Set<string>): string {
   const parsed = parseDefine(hat);
-  const hasReport = chainHas(hat.next, "control.report");
-  const returnType = hasReport ? "int" : "void";
-  const params = parsed.params.map((p) => `${guessType(p)} ${p}`).join(", ");
-  return emitFunction(parsed.name, parsed.params, hat.next, { needed, isMain: false, returnType, paramList: params });
+  const returnType = hat.fields.returnType || (chainHas(hat.next, "control.report") ? "int" : "void");
+  const paramList =
+    hat.params && hat.params.length
+      ? hat.params.map((p) => `${p.type} ${p.name}`).join(", ")
+      : parsed.params.map((p) => `${guessType(p)} ${p}`).join(", ");
+  return emitFunction(hat.fields.name || parsed.name, hat.params?.map((p) => p.name) ?? parsed.params, hat.next, {
+    needed,
+    isMain: false,
+    returnType,
+    paramList: paramList || "void",
+  });
 }
 
 function parseDefine(hat: Block): { name: string; params: string[] } {
@@ -127,10 +141,7 @@ function emitFunction(
     lines.push(`  ${d}`);
   }
   const bodyLines = emitChain(body, opts.needed, opts.isMain, 1);
-  if (opts.isMain && !chainHas(body, "control.stop") && !chainHas(body, "control.report") && !chainHas(body, "control.stopAll")) {
-    bodyLines.push("  return 0;");
-  }
-  const params = name === "main" ? "void" : (opts.paramList ?? "void");
+  const params = opts.paramList && opts.paramList.length ? opts.paramList : "void";
   const signature = `${opts.returnType} ${name}(${params})`;
   const inner = [...lines, ...bodyLines].join("\n");
   return `${signature} {\n${inner || "  /* empty */"}\n}`;
@@ -256,10 +267,10 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
     case "control.continue":
       return [`${pad}continue;`];
     case "control.stop":
-      return [isMain ? `${pad}return 0;` : `${pad}return;`];
+      return [`${pad}return;`];
     case "control.stopAll":
       needed.add("stdlib.h");
-      return [`${pad}exit(1);`];
+      return [`${pad}exit(${expr(block.values.value, needed)});`];
     case "control.report":
       return [`${pad}return ${expr(block.values.value, needed)};`];
     case "control.wait":

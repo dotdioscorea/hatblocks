@@ -1,8 +1,10 @@
 import type { LanguageAdapter } from "./types";
 import { matchesDocument } from "./types";
 import { cAdapter } from "./c/adapter";
+import { cppAdapter } from "./cpp/adapter";
+import { pythonAdapter } from "./python/adapter";
 
-const adapters: LanguageAdapter[] = [cAdapter];
+const adapters: LanguageAdapter[] = [cAdapter, cppAdapter, pythonAdapter];
 
 export function registerLanguage(adapter: LanguageAdapter): void {
   const exists = adapters.some((a) => a.id === adapter.id);

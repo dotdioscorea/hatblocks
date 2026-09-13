@@ -2,7 +2,7 @@
 
 Edit C as Scratch-style blocks, inside VS Code.
 
-C is first. The parser, the block IR, and the editor are separate so Python and JavaScript can plug in later without rewriting the stage.
+C, C++, and Python are first-class. The parser, the block IR, and the editor are separate so more languages can plug in without rewriting the stage.
 
 Not affiliated with Scratch or the Scratch Foundation.
 

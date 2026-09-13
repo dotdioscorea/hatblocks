@@ -56,6 +56,8 @@ export interface Block {
   branches: Record<string, Block | undefined>;
   /** Extra reporter slots, used by variable-arity calls. */
   extraArgs?: (Block | Literal)[];
+  /** Function hats: typed parameters. */
+  params?: { type: string; name: string }[];
   /** For custom C-block hacks (`while <> { ... } :: control`). */
   closer?: string;
   next?: Block;
