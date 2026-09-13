@@ -36,6 +36,7 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
       ],
     };
     panel.webview.html = webviewHtml(panel.webview, this.context.extensionUri, "editor.js");
+    console.log("[hatblocks] resolveCustomTextEditor", document.uri.toString());
 
     let applying = false;
     let ready = false;

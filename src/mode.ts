@@ -27,6 +27,9 @@ export async function setBlocksMode(on: boolean): Promise<void> {
   await syncEditorAssociations(on, target);
   await vscode.commands.executeCommand("setContext", "hatblocks.blocksMode", on);
   await convertOpenTabs(on);
+  if (on) {
+    await vscode.commands.executeCommand("hatblocks.toolbox.focus");
+  }
 }
 
 export async function toggleBlocksMode(): Promise<boolean> {
@@ -54,29 +57,48 @@ export async function syncEditorAssociations(on: boolean, target: vscode.Configu
 }
 
 export async function convertOpenTabs(on: boolean): Promise<void> {
-  const viewType = on ? EDITOR_VIEW_TYPE : "default";
+  const converted: string[] = [];
   for (const group of vscode.window.tabGroups.all) {
-    for (const tab of group.tabs) {
+    for (const tab of [...group.tabs]) {
       const uri = uriOfTab(tab);
       if (!uri || !isSupportedUri(uri)) {
         continue;
       }
       const isBlocks = tab.input instanceof vscode.TabInputCustom && tab.input.viewType === EDITOR_VIEW_TYPE;
-      const isText = tab.input instanceof vscode.TabInputText;
       if (on && !isBlocks) {
         await vscode.commands.executeCommand("vscode.openWith", uri, EDITOR_VIEW_TYPE, {
           viewColumn: group.viewColumn,
-          preserveFocus: true,
-          preview: tab.isPreview,
+          preview: false,
         });
-      } else if (!on && (isBlocks || (!isText && isSupportedUri(uri)))) {
+        converted.push(uri.toString());
+      } else if (!on && isBlocks) {
         await vscode.commands.executeCommand("vscode.openWith", uri, "default", {
           viewColumn: group.viewColumn,
-          preserveFocus: true,
-          preview: tab.isPreview,
+          preview: false,
         });
+        converted.push(uri.toString());
       }
     }
+  }
+  const leftovers: vscode.Tab[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      const uri = uriOfTab(tab);
+      if (!uri || !converted.includes(uri.toString())) {
+        continue;
+      }
+      const isBlocks = tab.input instanceof vscode.TabInputCustom && tab.input.viewType === EDITOR_VIEW_TYPE;
+      const isText = tab.input instanceof vscode.TabInputText;
+      if (on && isText) {
+        leftovers.push(tab);
+      }
+      if (!on && isBlocks) {
+        leftovers.push(tab);
+      }
+    }
+  }
+  if (leftovers.length) {
+    await vscode.window.tabGroups.close(leftovers, true);
   }
 }
 

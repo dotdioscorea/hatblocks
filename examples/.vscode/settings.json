@@ -1,3 +1,7 @@
 {
-  "hatblocks.blocksMode": true
+  "hatblocks.blocksMode": true,
+  "workbench.editorAssociations": {
+    "*.c": "hatblocks.editor",
+    "*.h": "hatblocks.editor"
+  }
 }

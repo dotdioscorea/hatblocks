@@ -103,36 +103,27 @@ class CLowerer {
     }
 
     const placed: Script[] = [];
-    let col = 0;
-    let row = 0;
     const place = (rootBlock: Block): Script => {
       const script: Script = {
         id: this.id(),
-        x: 16 + col * 300,
-        y: 16 + row * 300,
+        x: 12,
+        y: 16 + placed.length * 28,
         root: rootBlock,
       };
-      col += 1;
-      if (col >= 2) {
-        col = 0;
-        row += 1;
-      }
       return script;
     };
-
-    const main = scripts.filter((s) => s.root.comment === "__main__");
-    const rest = scripts.filter((s) => s.root.comment !== "__main__");
-    for (const s of [...main, ...rest]) {
-      const positioned = place(s.root);
-      positioned.root.comment = s.root.comment === "__main__" ? undefined : s.root.comment;
-      placed.push(positioned);
-    }
 
     if (preamble.length) {
       const head = chain(preamble);
       if (head) {
         placed.push(place(head));
       }
+    }
+    for (const s of scripts) {
+      if (s.root.comment === "__main__") {
+        s.root.comment = undefined;
+      }
+      placed.push(place(s.root));
     }
 
     const spriteName = baseName(this.fileName);
@@ -208,6 +199,7 @@ class CLowerer {
     const params = info.params;
     const bodyHead = body ? this.lowerStatement(body) : undefined;
     const isMain = info.name === "main";
+    const ret = collapse(typeNode?.text ?? "int");
     const hat = isMain
       ? this.block("events.flag", {
           source: spanOf(node),
@@ -215,15 +207,10 @@ class CLowerer {
         })
       : this.block("custom.define", {
           source: spanOf(node),
-          fields: { signature: signature(info.name, params) },
+          fields: { name: info.name, signature: signature(info.name, params) },
         });
+    hat.line = isMain ? `${ret} main` : `${ret} ${signature(info.name, params)}`;
     if (isMain) {
-      hat.comment = "__main__";
-      hat.line = "when @greenFlag clicked";
-    } else {
-      hat.line = `define ${signature(info.name, params)}`;
-    }
-    if (typeNode && isMain) {
       hat.comment = "__main__";
     }
     hat.next = bodyHead;
@@ -466,7 +453,7 @@ class CLowerer {
         values: { count: counted.count },
         branches: { body: repeatBody },
         source: spanOf(node),
-        comment: counted.varName ? `for ${counted.varName}` : undefined,
+        comment: undefined,
       });
       const initBlock = init ? this.lowerForInit(init) : counted.initBlock;
       if (initBlock) {

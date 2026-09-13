@@ -1,37 +1,76 @@
-:root {
-  --stage: var(--vscode-editor-background, #e9f1fc);
-  --dot: color-mix(in srgb, var(--vscode-editor-foreground, #c5d4eb) 18%, transparent);
-  --flag: #4cbf4c;
-  --ink: var(--vscode-foreground, #575e75);
-}
-
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; user-select: none; background: #e9f1fc; }
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family, var(--vscode-font-family));
+  font-size: var(--vscode-editor-font-size, 13px);
+}
 
 #app { height: 100%; display: flex; flex-direction: column; }
 
-.stage-wrap { flex: 1; position: relative; overflow: hidden; cursor: grab; }
-.stage-wrap.panning { cursor: grabbing; }
-.stage {
-  position: absolute;
-  inset: 0;
-  background: #e9f1fc;
-  background-image: radial-gradient(#c5d4eb 1.2px, transparent 1.2px);
-  background-size: 28px 28px;
+.stage-wrap {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: grab;
+  background: var(--vscode-editor-background);
 }
+.stage-wrap.panning { cursor: grabbing; }
+
+.gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 52px;
+  z-index: 2;
+  pointer-events: none;
+  background: var(--vscode-editorGutter-background, var(--vscode-editor-background));
+  border-right: 1px solid var(--vscode-panel-border, transparent);
+  overflow: hidden;
+}
+.ln {
+  position: absolute;
+  right: 8px;
+  left: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--vscode-editorLineNumber-foreground);
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  white-space: nowrap;
+}
+.ln.active { color: var(--vscode-editorLineNumber-activeForeground, var(--vscode-editor-foreground)); font-weight: 600; }
+.ln.empty { color: var(--vscode-editorLineNumber-foreground); opacity: 0.35; }
+
+.canvas {
+  position: absolute;
+  inset: 0 0 0 52px;
+}
+.stage { position: absolute; inset: 0; }
 .world { position: absolute; transform-origin: 0 0; }
+
 .script {
   position: absolute;
   cursor: grab;
-  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.18));
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.28));
 }
 .script.dragging { cursor: grabbing; z-index: 20; opacity: 0.92; }
-.script.selected { filter: drop-shadow(0 0 8px #fff04d) drop-shadow(0 2px 2px rgba(0,0,0,0.18)); }
+.script.selected {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 4px;
+}
+
 .snap-guide {
   position: absolute;
-  height: 6px;
-  background: #fff04d;
-  border-radius: 3px;
+  height: 4px;
+  background: var(--vscode-focusBorder, #fff04d);
+  border-radius: 2px;
   pointer-events: none;
   z-index: 30;
   display: none;
@@ -40,41 +79,36 @@ html, body { margin: 0; height: 100%; overflow: hidden; user-select: none; backg
 
 .hud {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
+  left: 60px;
+  bottom: 10px;
   display: flex;
   align-items: center;
   gap: 8px;
   z-index: 5;
 }
 .flag {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border: 0;
   border-radius: 50%;
-  background: var(--flag);
+  background: #4cbf4c;
   cursor: pointer;
   display: grid;
   place-items: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
 }
 .flag:hover { filter: brightness(1.08); }
 .stats {
-  font: 12px var(--vscode-font-family, sans-serif);
-  color: #7b86a1;
+  font: 12px var(--vscode-font-family);
+  color: var(--vscode-descriptionForeground);
 }
 .hint {
   position: absolute;
   right: 12px;
-  bottom: 12px;
-  font: 11px var(--vscode-font-family, sans-serif);
-  color: #7b86a1;
-  max-width: 46%;
+  bottom: 10px;
+  font: 11px var(--vscode-font-family);
+  color: var(--vscode-descriptionForeground);
+  max-width: 42%;
   text-align: right;
-}
-.ghost {
-  position: fixed;
-  pointer-events: none;
-  z-index: 50;
-  opacity: 0.85;
+  z-index: 5;
 }

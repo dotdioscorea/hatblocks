@@ -57,8 +57,8 @@ function render(): void {
     return;
   }
   if (!active || !program.toolbox.some((c) => c.id === active)) {
-    active = program.toolbox.find((c) => c.id === "extension")?.id
-      ?? program.toolbox.find((c) => c.id === "events")?.id
+    active = program.toolbox.find((c) => c.id === "custom")?.id
+      ?? program.toolbox.find((c) => c.id === "control")?.id
       ?? program.toolbox[0]?.id;
   }
   content.innerHTML = `<div class="body"><nav class="rail" id="rail"></nav><aside class="flyout" id="flyout"></aside></div>`;

@@ -11,7 +11,7 @@ Not affiliated with Scratch or the Scratch Foundation.
 - **Blocks mode** — a toggle for every open `.c` / `.h` file. The file *is* the editor, not a markdown-style preview beside it.
 - **Parts in the sidebar** — the Hatblocks activity-bar view is the palette. The file stays in the editor group.
 - **Green flag Run** — the editor Run button is a flag. It compiles with `clang` or `gcc` and runs in a terminal.
-- **C-shaped parts that Scratch never had** — `#include` lives in a teal **C** category (`stdio.h`, `stdlib.h`, …), `malloc` is “create clone of N bytes”, `main` is when-flag-clicked.
+- **The palette is the language** — Preproc, Functions, Control, Operators, Variables, Arrays, Pointers, I/O. Labels are C (`#include`, `int main`, `==`, `malloc`), not Scratch Motion/Sound. C++ and Scratch-the-language are next.
 
 ## Use it
 

@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { HatblocksEditorProvider } from "./editor";
 import { HatblocksHub } from "./hub";
-import { blocksModeEnabled, setBlocksMode, syncEditorAssociations, toggleBlocksMode } from "./mode";
+import { blocksModeEnabled, convertOpenTabs, setBlocksMode, syncEditorAssociations, toggleBlocksMode } from "./mode";
 import { runCDocument } from "./run";
 import { HatblocksToolboxProvider } from "./toolboxView";
 
@@ -26,7 +26,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const target = vscode.workspace.workspaceFolders?.length
       ? vscode.ConfigurationTarget.Workspace
       : vscode.ConfigurationTarget.Global;
-    void syncEditorAssociations(true, target);
+    void (async () => {
+      await syncEditorAssociations(true, target);
+      await convertOpenTabs(true);
+    })();
   }
 
   context.subscriptions.push(

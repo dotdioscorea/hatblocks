@@ -21,20 +21,23 @@ const app = document.createElement("div");
 app.id = "app";
 app.innerHTML = `
   <div class="stage-wrap" id="stageWrap">
-    <div class="stage" id="stage">
-      <div class="world" id="world"></div>
-      <div class="snap-guide" id="guide"></div>
+    <div class="gutter" id="gutter"></div>
+    <div class="canvas">
+      <div class="stage" id="stage">
+        <div class="world" id="world"></div>
+        <div class="snap-guide" id="guide"></div>
+      </div>
     </div>
     <div class="hud">
       <button class="flag" id="run" title="Green flag — compile and run">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true">
           <rect x="2" y="3" width="2.2" height="13" rx="0.6" fill="#fff"/>
           <path d="M4.2 3.2h9.2l-2.4 3.2 2.4 3.2H4.2V3.2z" fill="#fff"/>
         </svg>
       </button>
       <div class="stats" id="stats"></div>
     </div>
-    <div class="hint">Parts live in the Hatblocks sidebar. Snap stacks to edit this file. Delete removes a script.</div>
+    <div class="hint">Scratch blocks on a VS Code editor. Sidebar is the parts palette. Double-click a value to edit.</div>
   </div>
 `;
 document.body.appendChild(app);
@@ -46,6 +49,8 @@ ensureScratchStyles();
 const world = $("world");
 const stageWrap = $("stageWrap");
 const guide = $("guide");
+const gutter = $("gutter");
+let packOnce = false;
 
 function $(id: string): HTMLElement {
   return document.getElementById(id)!;
@@ -62,6 +67,7 @@ window.addEventListener("message", (event: MessageEvent<HostToEditor>) => {
   if (msg.type === "setProgram") {
     program = msg.program;
     selectedId = undefined;
+    packOnce = true;
     renderAll();
   }
   if (msg.type === "insert") {
@@ -114,6 +120,7 @@ window.addEventListener("keydown", (event) => {
 
 function applyPan(): void {
   world.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+  renderGutter();
 }
 
 function renderAll(): void {
@@ -125,7 +132,25 @@ function renderAll(): void {
   }
   $("stats").textContent = `${program.stats.scripts} scripts · ${program.stats.blocks} blocks`;
   renderScripts();
+  if (packOnce) {
+    packOnce = false;
+    packVertically();
+    renderScripts();
+  }
   applyPan();
+}
+
+function packVertically(): void {
+  if (!program) {
+    return;
+  }
+  let y = 12;
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    script.x = 12;
+    script.y = y;
+    y += (el?.offsetHeight ?? 72) + 18;
+  }
 }
 
 function renderScripts(): void {
@@ -142,8 +167,33 @@ function renderScripts(): void {
     el.style.top = `${script.y}px`;
     el.appendChild(renderCodeSvg(script.code, SCALE));
     el.addEventListener("pointerdown", (event) => startScriptDrag(event, script.id));
-    el.addEventListener("dblclick", () => editFirstLiteral(script.id));
+    el.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      editScript(script.id);
+    });
     world.appendChild(el);
+  }
+  renderGutter();
+}
+
+function renderGutter(): void {
+  if (!program) {
+    gutter.innerHTML = "";
+    return;
+  }
+  gutter.innerHTML = "";
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    const line = script.root.source ? script.root.source.start.line + 1 : undefined;
+    const n = document.createElement("div");
+    n.className = `ln${script.id === selectedId ? " active" : ""}${line === undefined ? " empty" : ""}`;
+    n.textContent = line !== undefined ? String(line) : "·";
+    n.title = line !== undefined ? `Line ${line}` : "Not in source yet";
+    const top = panY + script.y * zoom;
+    n.style.top = `${top}px`;
+    n.style.height = `${Math.max(18, (el?.offsetHeight ?? 24) * zoom)}px`;
+    n.style.paddingTop = `${Math.max(0, 4 * zoom)}px`;
+    gutter.appendChild(n);
   }
 }
 
@@ -172,6 +222,7 @@ function startScriptDrag(event: PointerEvent, id: string): void {
     el.style.left = `${script.x}px`;
     el.style.top = `${script.y}px`;
     showSnap(script);
+    renderGutter();
   };
   const up = () => {
     el.classList.remove("dragging");
@@ -183,6 +234,7 @@ function startScriptDrag(event: PointerEvent, id: string): void {
       attach(target, script);
     } else {
       renderScripts();
+      applyPan();
     }
   };
   el.addEventListener("pointermove", move);
@@ -214,9 +266,12 @@ function insertBlock(proto: Block): void {
       return;
     }
   }
-  const x = 16 + (sprite.scripts.length % 2) * 300;
-  const y = 16 + Math.floor(sprite.scripts.length / 2) * 220;
-  sprite.scripts.push({ id: createIdFactory("s")(), x, y, root });
+  let y = 12;
+  for (const existing of sprite.scripts) {
+    const el = world.querySelector(`.script[data-id="${existing.id}"]`) as HTMLElement | null;
+    y = Math.max(y, existing.y + (el?.offsetHeight ?? 72) + 18);
+  }
+  sprite.scripts.push({ id: createIdFactory("s")(), x: 12, y, root });
   commit();
 }
 
@@ -294,9 +349,19 @@ function hideSnap(): void {
   guide.classList.remove("show");
 }
 
-function editFirstLiteral(scriptId: string): void {
+function editScript(scriptId: string): void {
   const script = findScript(scriptId);
   if (!script) {
+    return;
+  }
+  const field = firstEditableField(script.root);
+  if (field) {
+    const next = window.prompt(`Edit ${field.key}`, field.block.fields[field.key] ?? "");
+    if (next === null) {
+      return;
+    }
+    field.block.fields[field.key] = next;
+    commit();
     return;
   }
   const found = firstLiteral(script.root);
@@ -316,6 +381,20 @@ function editFirstLiteral(scriptId: string): void {
     found.lit.value = next;
   }
   commit();
+}
+
+function firstEditableField(block: Block): { block: Block; key: string } | undefined {
+  const keys = ["header", "var", "name", "msg", "label", "what"];
+  let current: Block | undefined = block;
+  while (current) {
+    for (const key of keys) {
+      if (current.fields[key]) {
+        return { block: current, key };
+      }
+    }
+    current = current.next;
+  }
+  return undefined;
 }
 
 function firstLiteral(block: Block): { lit: Literal } | undefined {

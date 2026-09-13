@@ -36,7 +36,11 @@
       {
         "command": "hatblocks.toggleMode",
         "title": "Toggle Blocks Mode",
-        "category": "Hatblocks"
+        "category": "Hatblocks",
+        "icon": {
+          "light": "media/toggle.svg",
+          "dark": "media/toggle.svg"
+        }
       },
       {
         "command": "hatblocks.run",

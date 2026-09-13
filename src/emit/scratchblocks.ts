@@ -47,18 +47,20 @@ function emitChain(head: Block | undefined): string[] {
 function emitBlock(block: Block): string[] {
   const comment = block.comment && !block.comment.startsWith("__") ? ` // ${block.comment}` : "";
   const line = substitute(block.line, block) + extraArgText(block);
-  const withComment = comment ? `${line}${comment}` : line;
 
   if (block.shape === "c" || block.shape === "c2") {
     const body = indent(emitChain(block.branches.body));
     if (block.shape === "c2") {
       const elseBody = indent(emitChain(block.branches.else));
-      return [withComment, ...body, "else", ...elseBody, block.closer ? substitute(block.closer, block) : "end"];
+      if (block.closer) {
+        return [line, ...body, "} else {", ...elseBody, substitute(block.closer, block)];
+      }
+      return [line, ...body, "else", ...elseBody, "end"];
     }
     const closer = block.closer ? substitute(block.closer, block) : "end";
-    return [withComment, ...body, closer];
+    return [line, ...body, closer];
   }
-  return [withComment];
+  return [comment ? `${line}${comment}` : line];
 }
 
 function extraArgText(block: Block): string {
