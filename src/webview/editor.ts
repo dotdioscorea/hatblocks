@@ -331,12 +331,17 @@ function renderGaps(): void {
       continue;
     }
     const gap = Math.max(1, curr.gapBefore ?? Math.round(height / LINE_H) ?? 1);
+    const prevEl = world.querySelector(`.script[data-id="${prev.id}"]`) as HTMLElement | null;
+    const currEl = world.querySelector(`.script[data-id="${curr.id}"]`) as HTMLElement | null;
+    const width = Math.max(240, prevEl?.offsetWidth ?? 0, currEl?.offsetWidth ?? 0);
     const ui = document.createElement("div");
     ui.className = "gap-ui";
     ui.style.left = `${Math.min(prev.x, curr.x)}px`;
     ui.style.top = `${top}px`;
     ui.style.height = `${height}px`;
-    ui.innerHTML = `<button type="button" class="gap-btn" data-act="add" title="Add a blank line">+</button><button type="button" class="gap-btn" data-act="remove" title="Remove a blank line" ${gap <= 1 ? "disabled" : ""}>−</button>`;
+    ui.style.width = `${width}px`;
+    const rules = Array.from({ length: gap }, () => `<div class="gap-rule"></div>`).join("");
+    ui.innerHTML = `<div class="gap-btns"><button type="button" class="gap-btn" data-act="add" title="Add a blank line">+</button><button type="button" class="gap-btn" data-act="remove" title="Remove a blank line" ${gap <= 1 ? "disabled" : ""}>−</button></div><div class="gap-rules">${rules}</div>`;
     ui.addEventListener("pointerdown", (event) => event.stopPropagation());
     ui.querySelector('[data-act="add"]')?.addEventListener("click", (event) => {
       event.stopPropagation();

@@ -66,14 +66,32 @@ html, body {
   position: absolute;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
-  padding-left: 8px;
+  gap: 8px;
   z-index: 8;
   opacity: 0;
   transition: opacity 0.12s ease;
 }
 .gap-ui:hover { opacity: 1; }
+.gap-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.gap-rules {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  pointer-events: none;
+  min-width: 0;
+}
+.gap-rule {
+  width: 100%;
+  border-top: 1px dashed var(--vscode-editorLineNumber-foreground, #858585);
+  opacity: 0.85;
+}
 .gap-btn {
   width: 20px;
   height: 20px;
