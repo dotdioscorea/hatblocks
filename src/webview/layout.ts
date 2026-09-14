@@ -99,7 +99,13 @@ function translateXY(el: Element): { x: number; y: number } {
 }
 
 export function groupChildren(el: Element): SVGGElement[] {
-  return [...el.children].filter((c): c is SVGGElement => c.tagName === "g" || c.localName === "g");
+  return [...el.children].filter((c): c is SVGGElement => {
+    if (c.tagName !== "g" && c.localName !== "g") {
+      return false;
+    }
+    const cls = c.getAttribute("class") || "";
+    return !cls.includes("hb-union-glow");
+  });
 }
 
 function isCommentGroup(g: Element): boolean {

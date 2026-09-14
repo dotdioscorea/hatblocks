@@ -89,21 +89,16 @@ html, body {
 .gap-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 .gap-btn:disabled { opacity: 0.35; cursor: default; }
 
-path.hb-glow-hover {
-  fill: none !important;
-  stroke: #ffe566;
-  stroke-width: 3.5;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 2px #ffe566) drop-shadow(0 0 6px rgba(255, 229, 102, 0.7));
+g.hb-glow-hover {
+  filter:
+    drop-shadow(0 0 1px #ffe566)
+    drop-shadow(0 0 4px #ffe566)
+    drop-shadow(0 0 8px rgba(255, 229, 102, 0.7));
 }
-path.hb-glow-select {
-  fill: none !important;
-  stroke: var(--vscode-focusBorder, #4daafc);
-  stroke-width: 3;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  filter: drop-shadow(0 0 2px var(--vscode-focusBorder, #4daafc));
+g.hb-glow-select {
+  filter:
+    drop-shadow(0 0 1px var(--vscode-focusBorder, #4daafc))
+    drop-shadow(0 0 5px var(--vscode-focusBorder, #4daafc));
 }
 
 .snap-guide {
