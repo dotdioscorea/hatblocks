@@ -1,4 +1,5 @@
 import { isLiteral } from "./builders";
+import { lastBlock } from "./clone";
 import type { Block, Literal, Program } from "./types";
 
 export function forEachBlock(root: Block | undefined, fn: (b: Block) => void): void {
@@ -58,6 +59,17 @@ export function findInProgram(program: Program | undefined, id: string): Block |
     }
   }
   return undefined;
+}
+
+export function prependBranch(host: Block, slot: string, incoming: Block): void {
+  const old = host.branches[slot];
+  lastBlock(incoming).next = old;
+  host.branches[slot] = incoming;
+}
+
+export function insertAfter(after: Block, incoming: Block): void {
+  lastBlock(incoming).next = after.next;
+  after.next = incoming;
 }
 
 /** Unlink `target` from its parent. `target.next` (the tail) stays on target. */
