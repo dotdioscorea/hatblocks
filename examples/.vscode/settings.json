@@ -1,0 +1,13 @@
+{
+  "hatblocks.blocksMode": true,
+  "workbench.editorAssociations": {
+    "*.c": "hatblocks.editor",
+    "*.h": "hatblocks.editor",
+    "*.cpp": "hatblocks.editor",
+    "*.cc": "hatblocks.editor",
+    "*.cxx": "hatblocks.editor",
+    "*.hpp": "hatblocks.editor",
+    "*.hh": "hatblocks.editor",
+    "*.py": "hatblocks.editor"
+  }
+}
