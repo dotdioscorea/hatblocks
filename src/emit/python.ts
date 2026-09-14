@@ -141,6 +141,19 @@ function expr(value: Block | Literal | undefined): string {
   switch (value.opcode) {
     case "data.get":
       return value.fields.var || "x";
+    case "ops.chain": {
+      const parts = [value.values.a0, ...(value.extraArgs ?? [])];
+      return parts
+        .map((part, i) => {
+          const piece = expr(part);
+          if (i === 0) {
+            return piece;
+          }
+          const op = value.fields[`op${i - 1}`] ?? value.fields.op ?? "+";
+          return `${op} ${piece}`;
+        })
+        .join(" ");
+    }
     case "ops.add":
       return `(${expr(value.values.left)} + ${expr(value.values.right)})`;
     case "ops.sub":

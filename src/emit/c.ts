@@ -351,6 +351,8 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
       ];
     case "c.eval":
       return [`${pad}${expr(block.values.value, needed)};`];
+    case "ops.chain":
+      return [`${pad}${expr(block, needed)};`];
     case "c.unknown":
       return [`${pad}${block.fields.text || "/* unknown */"};`];
     case "c.ifdef":
@@ -440,6 +442,19 @@ function expr(value: Block | Literal | undefined, needed: Set<string>): string {
       return `(${expr(value.values.left, needed)} ^ ${expr(value.values.right, needed)})`;
     case "ops.shl":
       return `(${expr(value.values.left, needed)} << ${expr(value.values.right, needed)})`;
+    case "ops.chain": {
+      const parts = [value.values.a0, ...(value.extraArgs ?? [])];
+      return parts
+        .map((part, i) => {
+          const piece = expr(part, needed);
+          if (i === 0) {
+            return piece;
+          }
+          const op = value.fields[`op${i - 1}`] ?? value.fields.op ?? "+";
+          return `${op} ${piece}`;
+        })
+        .join(" ");
+    }
     case "ops.shr":
       return `(${expr(value.values.left, needed)} >> ${expr(value.values.right, needed)})`;
     case "ops.ternary":

@@ -46,7 +46,8 @@ function emitChain(head: Block | undefined): string[] {
 
 function emitBlock(block: Block): string[] {
   const comment = block.comment && !block.comment.startsWith("__") ? ` // ${block.comment}` : "";
-  const line = substitute(block.line, block) + extraArgText(block);
+  const line =
+    block.opcode === "ops.chain" ? emitInfix(block, false) : substitute(block.line, block) + extraArgText(block);
 
   if (block.shape === "c" || block.shape === "c2") {
     const body = indent(emitChain(block.branches.body));
@@ -112,6 +113,9 @@ function emitValue(value: Block | Literal): string {
     }
     return `[${escapeScratch(value.value)}]`;
   }
+  if (value.opcode === "ops.chain") {
+    return `(${emitInfix(value, true)})`;
+  }
   if (value.shape === "boolean") {
     return `<${inline(value)}>`;
   }
@@ -121,12 +125,34 @@ function emitValue(value: Block | Literal): string {
   return `(${inline(value)})`;
 }
 
+function emitInfix(block: Block, nested: boolean): string {
+  const parts = [block.values.a0, ...(block.extraArgs ?? [])];
+  const body = parts
+    .map((part, i) => {
+      const piece = part ? emitValue(part) : "()";
+      if (i === 0) {
+        return piece;
+      }
+      const op = (block.fields[`op${i - 1}`] ?? block.fields.op ?? "+").replace(/::/g, ": :");
+      return `${op} ${piece}`;
+    })
+    .join(" ");
+  return nested ? body : `${body} :: operators`;
+}
+
 function inline(block: Block): string {
-  const inner = substitute(block.line, block);
+  let inner = substitute(block.line, block);
+  if (block.category === "operators" || block.opcode.startsWith("ops.")) {
+    inner = stripCategory(inner);
+  }
   if (block.extraArgs?.length && !block.line.includes("::")) {
     return `${inner} ${block.extraArgs.map((a) => emitValue(a)).join(" ")}`.trim();
   }
   return inner;
+}
+
+function stripCategory(line: string): string {
+  return line.replace(/\s*::\s*[a-zA-Z][\w-]*(?:\s+[a-zA-Z][\w-]*)*$/, "").trim();
 }
 
 function indent(lines: string[]): string[] {

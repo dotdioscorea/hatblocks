@@ -3,7 +3,7 @@ import { emitProgram } from "../emit/scratchblocks";
 import { cloneBlock, lastBlock } from "../ir/clone";
 import { createIdFactory, recomputeStats } from "../ir/ids";
 import { isLiteral, litEmpty } from "../ir/builders";
-import { rebuildHat, rebuildCall, rebuildForRange, rebuildLambda } from "../library/hats";
+import { rebuildHat, rebuildCall, rebuildChain, rebuildForRange, rebuildLambda } from "../library/hats";
 import { CATALOG_BY_OPCODE, prototypeFromDef } from "../library/catalog";
 import { findBlock, findInProgram, unlink } from "../ir/tree";
 import type { Block, Literal, Program, Script } from "../ir/types";
@@ -406,18 +406,36 @@ function renderGutter(): void {
     return;
   }
   gutter.innerHTML = "";
-  for (const script of program.sprites[0].scripts) {
-    for (const mark of marksForScript(script)) {
+  const scripts = program.sprites[0].scripts;
+  for (let i = 0; i < scripts.length; i++) {
+    const script = scripts[i];
+    const marks = marksForScript(script);
+    if (i > 0) {
+      const gap = Math.max(0, script.gapBefore ?? 0);
+      const first = marks.map((m) => m.line).filter((n): n is number => n !== undefined).sort((a, b) => a - b)[0];
+      const prev = scripts[i - 1];
+      const top = prev.y + scriptHeight(prev);
+      const startLine = first !== undefined ? first - gap : undefined;
+      for (let k = 0; k < gap; k++) {
+        const n = document.createElement("div");
+        n.className = "ln";
+        n.textContent = startLine !== undefined ? String(startLine + k) : "";
+        n.title = startLine !== undefined ? `Line ${startLine + k}` : "Blank line";
+        n.style.top = `${(top + k * LINE_H) * zoom - canvasEl.scrollTop}px`;
+        n.style.height = `${LINE_H * zoom}px`;
+        gutter.appendChild(n);
+      }
+    }
+    for (const mark of marks) {
       if (mark.line === undefined) {
         continue;
       }
       const n = document.createElement("div");
-      n.className = `ln${mark.block.id === selectedBlockId ? " active" : ""}`;
+      n.className = `ln${mark.block.id === selectedBlockId && mark.role !== "closer" ? " active" : ""}`;
       n.textContent = String(mark.line);
-      n.title = `Line ${mark.line}`;
+      n.title = mark.role === "closer" ? `Line ${mark.line} (closer)` : `Line ${mark.line}`;
       n.style.top = `${(script.y + mark.y) * zoom - canvasEl.scrollTop}px`;
       n.style.height = `${Math.max(12, (mark.headerH || Math.min(mark.h, 36)) * zoom)}px`;
-      n.style.paddingTop = `${Math.max(0, 2 * zoom)}px`;
       gutter.appendChild(n);
     }
   }
@@ -452,6 +470,7 @@ function isCall(block: Block): boolean {
     block.opcode === "custom.reporter" ||
     block.opcode === "custom.method" ||
     block.opcode === "custom.tmplCall" ||
+    block.opcode === "ops.chain" ||
     block.opcode === "py.list" ||
     block.opcode === "py.tuple"
   );
@@ -608,7 +627,11 @@ function applyMutation(m: InspectorMutation): void {
     rebuildHat(block);
   }
   if (isCall(block)) {
-    rebuildCall(block);
+    if (block.opcode === "ops.chain") {
+      rebuildChain(block);
+    } else {
+      rebuildCall(block);
+    }
   }
   if (block.opcode === "control.forRange") {
     rebuildForRange(block);

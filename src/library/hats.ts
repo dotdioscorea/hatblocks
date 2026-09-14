@@ -78,6 +78,21 @@ export function rebuildCompoundDef(block: {
   }
 }
 
+export function rebuildChain(block: {
+  opcode: string;
+  fields: Record<string, string>;
+  extraArgs?: unknown[];
+  line: string;
+}): void {
+  const n = Math.max(2, 1 + (block.extraArgs?.length ?? 1));
+  const defOp = (block.fields.op || "+").trim() || "+";
+  block.fields.op = defOp;
+  for (let i = 0; i < n - 1; i++) {
+    block.fields[`op${i}`] = (block.fields[`op${i}`] || defOp).trim() || defOp;
+  }
+  block.line = "{a0} :: operators";
+}
+
 export function rebuildCall(block: {
   opcode: string;
   fields: Record<string, string>;

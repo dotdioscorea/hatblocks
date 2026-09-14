@@ -11,6 +11,7 @@ export interface Mark {
   line?: number;
   /** SVG group for this brick, when marks came from the painted script. */
   el?: SVGGElement;
+  role?: "stmt" | "closer" | "blank";
 }
 
 /** Scratch 3 command first-line is 40 + padding 4+4. */
@@ -27,16 +28,19 @@ export function layoutMarks(block: Block | undefined, y = 0, marks: Mark[] = [])
   while (block) {
     const start = cursor;
     let headerH = STACK;
+    let innerLines: number[] = [];
     if (block.shape === "c" || block.shape === "c2") {
       headerH = C_HEAD;
       cursor += C_HEAD;
       const body = layoutMarks(block.branches.body, cursor);
       marks.push(...body.marks);
+      innerLines = body.marks.map((m) => m.line).filter((n): n is number => n !== undefined);
       cursor = body.height === cursor ? cursor + EMPTY_MOUTH : body.height;
       if (block.shape === "c2") {
         cursor += C_ELSE;
         const alt = layoutMarks(block.branches.else, cursor);
         marks.push(...alt.marks);
+        innerLines.push(...alt.marks.map((m) => m.line).filter((n): n is number => n !== undefined));
         cursor = alt.height === cursor ? cursor + EMPTY_MOUTH : alt.height;
       }
       cursor += C_FOOT;
@@ -44,14 +48,31 @@ export function layoutMarks(block: Block | undefined, y = 0, marks: Mark[] = [])
       headerH = block.shape === "hat" ? HAT : STACK;
       cursor += headerH;
     }
+    const fullH = cursor - start;
     marks.push({
       block,
       y: start,
-      h: cursor - start,
+      h: fullH,
       headerH,
       chainH: 0,
       line: block.source ? block.source.start.line + 1 : undefined,
+      role: "stmt",
     });
+    if ((block.shape === "c" || block.shape === "c2") && block.source) {
+      const lastInner = innerLines.length ? Math.max(...innerLines) : block.source.start.line + 1;
+      const endLine = block.source.end.line + 1;
+      if (endLine > lastInner) {
+        marks.push({
+          block,
+          y: cursor - C_FOOT,
+          h: C_FOOT,
+          headerH: C_FOOT,
+          chainH: 0,
+          line: endLine,
+          role: "closer",
+        });
+      }
+    }
     block = block.next;
   }
   for (let i = startIndex; i < marks.length; i++) {
@@ -165,9 +186,11 @@ function walkSvgScript(
       chainH: h,
       line: block.source ? block.source.start.line + 1 : undefined,
       el: g,
+      role: "stmt",
     };
     marks.push(mark);
     chain.push({ block, y, h, mark });
+    const innerStart = marks.length;
     if (block.branches.body && mouths[0]) {
       const innerY = translateXY(mouths[0]).y;
       walkSvgScript(block.branches.body, mouths[0], offsetY + ty + innerY, scale, marks);
@@ -175,6 +198,24 @@ function walkSvgScript(
     if (block.shape === "c2" && block.branches.else && mouths[1]) {
       const innerY = translateXY(mouths[1]).y;
       walkSvgScript(block.branches.else, mouths[1], offsetY + ty + innerY, scale, marks);
+    }
+    if ((block.shape === "c" || block.shape === "c2") && block.source) {
+      const innerLines = marks.slice(innerStart).map((m) => m.line).filter((n): n is number => n !== undefined);
+      const lastInner = innerLines.length ? Math.max(...innerLines) : block.source.start.line + 1;
+      const endLine = block.source.end.line + 1;
+      if (endLine > lastInner) {
+        const foot = Math.min(22, Math.max(14, headerH * 0.45));
+        marks.push({
+          block,
+          y: y + h - foot,
+          h: foot,
+          headerH: foot,
+          chainH: foot,
+          line: endLine,
+          role: "closer",
+          el: g,
+        });
+      }
     }
     block = block.next;
   }

@@ -6,6 +6,8 @@ import { CATALOG, defaultToolbox, groupToolbox } from "../../library/catalog";
 import { rebuildCompoundDef } from "../../library/hats";
 import { headerName, stripCString } from "./builtins";
 
+const CHAIN_OPS = new Set(["+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^", "&&", "||"]);
+
 const BINARY_OPS: Record<string, string> = {
   "+": "ops.add",
   "-": "ops.sub",
@@ -611,6 +613,10 @@ class CLowerer {
       return chain(parts);
     }
     const value = this.lowerExpr(node);
+    if (!isLiteral(value) && value.opcode === "ops.chain") {
+      value.shape = "stack";
+      return value;
+    }
     return this.block("c.eval", { values: { value }, source: spanOf(node) });
   }
 
@@ -873,6 +879,22 @@ class CLowerer {
     const leftNode = node.childForFieldName("left");
     const rightNode = node.childForFieldName("right");
     const boolish = ["<", ">", "<=", ">=", "==", "!=", "&&", "||"].includes(op);
+    if (CHAIN_OPS.has(op)) {
+      const parts: (Block | Literal)[] = [];
+      this.flattenBin(node, op, parts, boolish && (op === "&&" || op === "||"));
+      const [a0, ...rest] = parts.length ? parts : [litEmpty(), litEmpty()];
+      const fields: Record<string, string> = { op };
+      rest.forEach((_, i) => {
+        fields[`op${i}`] = op;
+      });
+      return this.block("ops.chain", {
+        fields,
+        values: { a0 },
+        extraArgs: rest,
+        source: spanOf(node),
+        shape: "reporter",
+      });
+    }
     const left = leftNode ? this.lowerExpr(leftNode, boolish && (op === "&&" || op === "||")) : litEmpty();
     const right = rightNode ? this.lowerExpr(rightNode, boolish && (op === "&&" || op === "||")) : litEmpty();
     if (op === "!=") {
@@ -887,6 +909,24 @@ class CLowerer {
       source: spanOf(node),
       shape,
     });
+  }
+
+  private flattenBin(node: Node, op: string, out: (Block | Literal)[], innerBool: boolean): void {
+    if (node.type === "binary_expression") {
+      const nodeOp = node.childForFieldName("operator")?.text ?? "";
+      if (nodeOp === op) {
+        const left = node.childForFieldName("left");
+        const right = node.childForFieldName("right");
+        if (left) {
+          this.flattenBin(left, op, out, innerBool);
+        }
+        if (right) {
+          out.push(this.lowerExpr(right, innerBool));
+        }
+        return;
+      }
+    }
+    out.push(this.lowerExpr(node, innerBool));
   }
 
   private lowerUnary(node: Node, asBoolean: boolean): Block | Literal {

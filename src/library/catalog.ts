@@ -181,11 +181,13 @@ export const CATALOG: OpcodeDef[] = [
   { opcode: "control.wait", shape: "stack", category: "control", line: "sleep {secs};", valueSlots: ["secs"] },
 
   // Operators — C tokens
-  { opcode: "ops.add", shape: "reporter", category: "operators", line: "{left} + {right}", valueSlots: ["left", "right"] },
-  { opcode: "ops.sub", shape: "reporter", category: "operators", line: "{left} - {right}", valueSlots: ["left", "right"] },
-  { opcode: "ops.mul", shape: "reporter", category: "operators", line: "{left} * {right}", valueSlots: ["left", "right"] },
-  { opcode: "ops.div", shape: "reporter", category: "operators", line: "{left} / {right}", valueSlots: ["left", "right"] },
-  { opcode: "ops.mod", shape: "reporter", category: "operators", line: "{left} % {right} :: operators", valueSlots: ["left", "right"] },
+  { opcode: "ops.chain", shape: "reporter", category: "operators", line: "{a0} :: operators", fields: { op: "+", op0: "+" }, valueSlots: ["a0"] },
+  { opcode: "ops.token", shape: "reporter", category: "operators", line: "{sym} :: operators", fields: { sym: "<<" } },
+  { opcode: "ops.add", shape: "reporter", category: "operators", line: "{left} + {right}", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.sub", shape: "reporter", category: "operators", line: "{left} - {right}", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.mul", shape: "reporter", category: "operators", line: "{left} * {right}", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.div", shape: "reporter", category: "operators", line: "{left} / {right}", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.mod", shape: "reporter", category: "operators", line: "{left} % {right} :: operators", valueSlots: ["left", "right"], hidden: true },
   { opcode: "ops.lt", shape: "boolean", category: "operators", line: "{left} < {right}", valueSlots: ["left", "right"] },
   { opcode: "ops.gt", shape: "boolean", category: "operators", line: "{left} > {right}", valueSlots: ["left", "right"] },
   { opcode: "ops.le", shape: "boolean", category: "operators", line: "{left} <= {right} :: operators", valueSlots: ["left", "right"] },
@@ -195,11 +197,11 @@ export const CATALOG: OpcodeDef[] = [
   { opcode: "ops.and", shape: "boolean", category: "operators", line: "{left} && {right} :: operators", valueSlots: ["left", "right"] },
   { opcode: "ops.or", shape: "boolean", category: "operators", line: "{left} || {right} :: operators", valueSlots: ["left", "right"] },
   { opcode: "ops.not", shape: "boolean", category: "operators", line: "! {inner} :: operators", valueSlots: ["inner"] },
-  { opcode: "ops.bitand", shape: "reporter", category: "operators", line: "{left} & {right} :: operators", valueSlots: ["left", "right"] },
-  { opcode: "ops.bitor", shape: "reporter", category: "operators", line: "{left} | {right} :: operators", valueSlots: ["left", "right"] },
-  { opcode: "ops.bitxor", shape: "reporter", category: "operators", line: "{left} ^ {right} :: operators", valueSlots: ["left", "right"] },
-  { opcode: "ops.shl", shape: "reporter", category: "operators", line: "{left} << {right} :: operators", valueSlots: ["left", "right"] },
-  { opcode: "ops.shr", shape: "reporter", category: "operators", line: "{left} >> {right} :: operators", valueSlots: ["left", "right"] },
+  { opcode: "ops.bitand", shape: "reporter", category: "operators", line: "{left} & {right} :: operators", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.bitor", shape: "reporter", category: "operators", line: "{left} | {right} :: operators", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.bitxor", shape: "reporter", category: "operators", line: "{left} ^ {right} :: operators", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.shl", shape: "reporter", category: "operators", line: "{left} << {right} :: operators", valueSlots: ["left", "right"], hidden: true },
+  { opcode: "ops.shr", shape: "reporter", category: "operators", line: "{left} >> {right} :: operators", valueSlots: ["left", "right"], hidden: true },
   { opcode: "ops.neg", shape: "reporter", category: "operators", line: "- {inner} :: operators", valueSlots: ["inner"] },
   { opcode: "ops.ternary", shape: "reporter", category: "operators", line: "{condition} ? {then} : {else} :: operators", valueSlots: ["condition", "then", "else"] },
   { opcode: "ops.cast", shape: "reporter", category: "operators", line: "({type}) {value} :: operators", valueSlots: ["type", "value"] },
@@ -301,6 +303,9 @@ export function prototypeFromDef(def: OpcodeDef, id: IdFactory = createIdFactory
   }
   for (const slot of def.branchSlots ?? []) {
     init.branches![slot] = undefined;
+  }
+  if (def.opcode === "ops.chain") {
+    init.extraArgs = [litEmpty()];
   }
   return makeBlock(id, init);
 }

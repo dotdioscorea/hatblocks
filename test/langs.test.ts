@@ -94,7 +94,8 @@ test("cpp hello.cpp parses as cpp with a main hat", async () => {
   assert.ok(opcodes.has("type.tmpl") || opcodes.has("type.scope"), "vector type should be nested type boxes");
   assert.ok(opcodes.has("custom.method"), "push_back should be member access");
   assert.ok(opcodes.has("control.forRange"), "range-for should be customisable");
-  assert.ok(opcodes.has("ops.shl"), "cout << should be the shift/stream operator");
+  assert.ok(opcodes.has("ops.chain"), "cout << x << endl should be one n-ary operator chain");
+  assert.doesNotMatch(code, /:: operators\)\s*<</);
   assert.ok(!opcodes.has("looks.printf"));
 });
 

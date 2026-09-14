@@ -50,6 +50,7 @@ function isCall(block: Block): boolean {
     block.opcode === "custom.reporter" ||
     block.opcode === "custom.method" ||
     block.opcode === "custom.tmplCall" ||
+    block.opcode === "ops.chain" ||
     block.opcode === "py.list" ||
     block.opcode === "py.tuple"
   );
