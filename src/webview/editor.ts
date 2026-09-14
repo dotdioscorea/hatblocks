@@ -322,7 +322,14 @@ function isHat(block: Block): boolean {
 }
 
 function isCall(block: Block): boolean {
-  return block.opcode === "custom.call" || block.opcode === "custom.reporter" || block.opcode === "custom.method" || block.opcode === "custom.tmplCall";
+  return (
+    block.opcode === "custom.call" ||
+    block.opcode === "custom.reporter" ||
+    block.opcode === "custom.method" ||
+    block.opcode === "custom.tmplCall" ||
+    block.opcode === "py.list" ||
+    block.opcode === "py.tuple"
+  );
 }
 
 function isReporterish(block: Block): boolean {

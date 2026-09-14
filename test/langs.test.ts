@@ -30,7 +30,43 @@ test("python hello.py lowers defs and print", async () => {
   assert.match(code, /:: custom hat|greet/);
   assert.match(code, /print|__main__/);
   assert.doesNotMatch(code, /clicked/);
+  const opcodes = collectOpcodes(program);
+  assert.ok(opcodes.has("py.list"), "list literals are list reporters, not C-block braces");
+  assert.doesNotMatch(code, /\{\s*\}/);
+  assert.match(code, /for \[n\] in/);
+  assert.match(code, /variables stack/);
+  const labels = program.toolbox.map((c) => c.label);
+  assert.ok(labels.includes("Import"));
+  assert.ok(!labels.includes("Pre"));
+  assert.ok(!labels.includes("Ptr"));
+  const lines = collectSourceLines(program);
+  assert.ok(lines.has(13) || lines.has(14), "greet/xs should keep their source lines");
+  assert.ok(lines.has(15) && lines.has(16) && lines.has(17), "statements after the list keep line numbers");
 });
+
+function collectSourceLines(program: { sprites: Array<{ scripts: Array<{ root: { source?: { start: { line: number } }; next?: unknown; values?: Record<string, unknown>; branches?: Record<string, unknown> } }> }> }): Set<number> {
+  const out = new Set<number>();
+  const walk = (block: { source?: { start: { line: number } }; next?: unknown; values?: Record<string, unknown>; branches?: Record<string, unknown> } | undefined): void => {
+    let current = block;
+    while (current) {
+      if (current.source) {
+        out.add(current.source.start.line + 1);
+      }
+      for (const b of Object.values(current.branches ?? {})) {
+        if (b && typeof b === "object") {
+          walk(b as typeof current);
+        }
+      }
+      current = current.next as typeof current;
+    }
+  };
+  for (const sprite of program.sprites) {
+    for (const script of sprite.scripts) {
+      walk(script.root);
+    }
+  }
+  return out;
+}
 
 test("cpp hello.cpp parses as cpp with a main hat", async () => {
   const source = readFileSync(join(examples, "hello.cpp"), "utf8");

@@ -116,14 +116,17 @@ class PyLowerer {
         return this.lowerClass(node);
       case "import_statement":
         return pyPrototype("py.import", this.id, {
-          fields: { module: collapse(named(node)[0]?.text ?? "sys") },
+          values: { module: this.nameBox(collapse(named(node)[0]?.text ?? "sys")) },
           source: spanOf(node),
         });
       case "import_from_statement": {
-        const mod = node.childForFieldName("module_name")?.text ?? "os";
+        const mod = node.childForFieldName("module_name")?.text ?? named(node)[0]?.text ?? "os";
         const nm = node.childForFieldName("name")?.text ?? named(node)[1]?.text ?? "*";
         return pyPrototype("py.importFrom", this.id, {
-          fields: { module: collapse(mod), name: collapse(nm) },
+          values: {
+            module: this.nameBox(collapse(mod)),
+            name: this.nameBox(collapse(nm)),
+          },
           source: spanOf(node),
         });
       }
@@ -390,14 +393,11 @@ class PyLowerer {
       case "tuple":
       case "set": {
         const items = named(node).map((n) => this.lowerExpr(n));
-        const block = pyPrototype("custom.reporter", this.id, {
-          fields: { name: node.type === "tuple" ? "" : "" },
+        const opcode = node.type === "tuple" ? "py.tuple" : "py.list";
+        return pyPrototype(opcode, this.id, {
           extraArgs: items,
           source: spanOf(node),
         });
-        block.line = "{ } :: operators";
-        block.category = "operators";
-        return block;
       }
       case "call":
         return this.lowerCall(node, false);
@@ -471,6 +471,10 @@ class PyLowerer {
       },
       source: spanOf(node),
     });
+  }
+
+  private nameBox(name: string): Block {
+    return pyPrototype("type.named", this.id, { fields: { name: name || "x" } });
   }
 
   private lowerPyType(node: Node): Block {

@@ -46,7 +46,7 @@ export const CATALOG: OpcodeDef[] = [
   { opcode: "type.custom", shape: "reporter", category: "motion", line: "{name} :: motion", fields: { name: "T" } },
   { opcode: "type.ptr", shape: "reporter", category: "motion", line: "{inner} * :: motion", valueSlots: ["inner"] },
   { opcode: "type.ref", shape: "reporter", category: "motion", line: "{inner} & :: motion", valueSlots: ["inner"] },
-  { opcode: "type.tmpl", shape: "reporter", category: "motion", line: "{base} < {arg} > :: motion", valueSlots: ["base", "arg"] },
+  { opcode: "type.tmpl", shape: "reporter", category: "motion", line: "{base} ( {arg} ) :: motion", valueSlots: ["base", "arg"] },
   { opcode: "type.scope", shape: "reporter", category: "motion", line: "{left} : : {right} :: motion", valueSlots: ["left", "right"] },
 
   // Functions
@@ -202,12 +202,12 @@ export const CATALOG: OpcodeDef[] = [
   },
 
   // Variables — left of `=` is a slot; declarations take a type reporter
-  { opcode: "data.assign", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables", valueSlots: ["lhs", "rhs"] },
-  { opcode: "data.set", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables", valueSlots: ["lhs", "rhs"], hidden: true },
-  { opcode: "data.change", shape: "stack", category: "variables", line: "{lhs} += {rhs} :: variables", valueSlots: ["lhs", "rhs"] },
+  { opcode: "data.assign", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables stack", valueSlots: ["lhs", "rhs"] },
+  { opcode: "data.set", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables stack", valueSlots: ["lhs", "rhs"], hidden: true },
+  { opcode: "data.change", shape: "stack", category: "variables", line: "{lhs} += {rhs} :: variables stack", valueSlots: ["lhs", "rhs"] },
   { opcode: "data.get", shape: "reporter", category: "variables", line: "{var}", fields: { var: "x" } },
-  { opcode: "data.declare", shape: "stack", category: "variables", line: "{type} {name} :: variables", fields: { name: "x" }, valueSlots: ["type"] },
-  { opcode: "data.declareInit", shape: "stack", category: "variables", line: "{type} {name} = {value} :: variables", fields: { name: "x" }, valueSlots: ["type", "value"] },
+  { opcode: "data.declare", shape: "stack", category: "variables", line: "{type} {name} :: variables stack", fields: { name: "x" }, valueSlots: ["type"] },
+  { opcode: "data.declareInit", shape: "stack", category: "variables", line: "{type} {name} = {value} :: variables stack", fields: { name: "x" }, valueSlots: ["type", "value"] },
 
   // Arrays
   {

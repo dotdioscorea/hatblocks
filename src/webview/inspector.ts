@@ -2,6 +2,8 @@ import css from "./inspector.css";
 import type { Block } from "../ir/types";
 import { isLiteral } from "../ir/builders";
 import type { HostToInspector, InspectorMutation, InspectorToHost } from "../protocol";
+import { PY_STD_IMPORTS, PY_STD_MODULES, PY_STD_TYPES } from "../languages/python/catalog";
+import { C_TYPES } from "../library/hats";
 
 const vscode = acquireVsCodeApi();
 
@@ -15,6 +17,9 @@ document.head.appendChild(style);
 
 const body = document.getElementById("body")!;
 let current: Block | null = null;
+let language = "c";
+
+const C_HEADERS = ["stdio.h", "stdlib.h", "string.h", "math.h", "stdint.h", "stdbool.h", "iostream", "vector", "string"];
 
 function post(msg: InspectorToHost): void {
   vscode.postMessage(msg);
@@ -26,6 +31,7 @@ window.addEventListener("message", (event: MessageEvent<HostToInspector>) => {
   const msg = event.data;
   if (msg.type === "setSelection") {
     current = msg.state.block;
+    language = msg.state.language || "c";
     render();
   }
 });
@@ -43,19 +49,63 @@ function isCall(block: Block): boolean {
     block.opcode === "custom.call" ||
     block.opcode === "custom.reporter" ||
     block.opcode === "custom.method" ||
-    block.opcode === "custom.tmplCall"
+    block.opcode === "custom.tmplCall" ||
+    block.opcode === "py.list" ||
+    block.opcode === "py.tuple"
   );
 }
 
 function slotName(block: Block, slot: string): string {
   const v = block.values[slot];
   if (!v || isLiteral(v)) {
-    return "";
+    return isLiteral(v) && v.kind !== "empty" ? v.value : "";
   }
   if (v.opcode === "type.named" || v.opcode === "type.custom" || v.opcode === "data.get") {
     return v.fields.name || v.fields.var || "";
   }
   return "";
+}
+
+function suggestionsFor(key: string): string[] {
+  if (language === "python") {
+    if (key === "module") {
+      return PY_STD_MODULES;
+    }
+    if (key === "name" && current?.opcode === "py.importFrom") {
+      return PY_STD_IMPORTS;
+    }
+    if (key === "type" || key === "ret" || /^t\d+$/.test(key) || key === "arg" || key === "base") {
+      return PY_STD_TYPES;
+    }
+  } else {
+    if (key === "header") {
+      return C_HEADERS;
+    }
+    if (key === "type" || key === "ret" || /^t\d+$/.test(key) || key === "arg" || key === "base") {
+      return C_TYPES;
+    }
+  }
+  return [];
+}
+
+function fieldInput(key: string, value: string): string {
+  const list = suggestionsFor(key);
+  const listId = list.length ? `dl-${key}` : "";
+  const datalist = list.length
+    ? `<datalist id="${listId}">${list.map((o) => `<option value="${escapeAttr(o)}"></option>`).join("")}</datalist>`
+    : "";
+  const listAttr = listId ? ` list="${listId}"` : "";
+  return `<label>${escapeAttr(labelFor(key))}</label><input data-field="${escapeAttr(key)}" value="${escapeAttr(value)}"${listAttr} />${datalist}`;
+}
+
+function slotInput(slot: string, value: string): string {
+  const list = suggestionsFor(slot);
+  const listId = list.length ? `dl-slot-${slot}` : "";
+  const datalist = list.length
+    ? `<datalist id="${listId}">${list.map((o) => `<option value="${escapeAttr(o)}"></option>`).join("")}</datalist>`
+    : "";
+  const listAttr = listId ? ` list="${listId}"` : "";
+  return `<label>${escapeAttr(labelFor(slot))}</label><input data-slot="${escapeAttr(slot)}" value="${escapeAttr(value)}"${listAttr} />${datalist}`;
 }
 
 function render(): void {
@@ -71,19 +121,21 @@ function render(): void {
 
   const fieldKeys = Object.keys(block.fields).filter((k) => !/^p\d+$/.test(k) && k !== "returnType");
   for (const key of fieldKeys) {
-    bits.push(`<label>${escapeAttr(labelFor(key))}</label><input data-field="${escapeAttr(key)}" value="${escapeAttr(block.fields[key] ?? "")}" />`);
+    bits.push(fieldInput(key, block.fields[key] ?? ""));
   }
 
-  const typeSlots = ["ret", "type", "t0", "inner", "base", "arg", "targ"].filter((s) => s in block.values || (isHat(block) && s === "ret"));
+  const typeSlots = ["ret", "type", "t0", "inner", "base", "arg", "targ", "module", "name"].filter(
+    (s) => s in block.values || (isHat(block) && s === "ret"),
+  );
   for (const slot of Object.keys(block.values)) {
-    if (/^t\d+$/.test(slot) && !typeSlots.includes(slot)) {
+    if ((/^t\d+$/.test(slot) || slot === "module" || slot === "name") && !typeSlots.includes(slot)) {
       typeSlots.push(slot);
     }
   }
   for (const slot of typeSlots) {
     const text = slotName(block, slot);
-    if (text || slot === "ret" || slot === "type" || /^t\d+$/.test(slot)) {
-      bits.push(`<label>${escapeAttr(labelFor(slot))} (type)</label><input data-slot="${escapeAttr(slot)}" value="${escapeAttr(text)}" />`);
+    if (text || slot === "ret" || slot === "type" || slot === "module" || slot === "name" || /^t\d+$/.test(slot)) {
+      bits.push(slotInput(slot, text));
     }
   }
 
@@ -99,11 +151,18 @@ function render(): void {
 
   if (isCall(block) || block.opcode === "cpp.new") {
     const n = block.extraArgs?.length ?? 0;
-    bits.push(`<p class="muted">${n} argument slot${n === 1 ? "" : "s"}</p>`);
-    bits.push(`<button type="button" id="addArg">+ argument</button><button type="button" id="delArg">− argument</button>`);
+    const kind = block.opcode === "py.list" || block.opcode === "py.tuple" ? "item" : "argument";
+    bits.push(`<p class="muted">${n} ${kind} slot${n === 1 ? "" : "s"}</p>`);
+    bits.push(`<button type="button" id="addArg">+ ${kind}</button><button type="button" id="delArg">− ${kind}</button>`);
   }
 
-  bits.push(`<p class="hint">Types are freeform text, or drag a type box from the library onto this block. Function names, variables, and members are the same — nothing is locked to a preset list.</p>`);
+  bits.push(
+    `<p class="hint">${
+      language === "python"
+        ? "Python parts. Suggestions are a starting point — type anything. Drag type boxes into holes."
+        : "Types and names are freeform. Suggestions appear where they help; they are not a closed list."
+    }</p>`,
+  );
   body.innerHTML = bits.join("");
 
   body.querySelectorAll("input[data-field]").forEach((el) => {
@@ -126,10 +185,13 @@ function labelFor(key: string): string {
     return "Return type";
   }
   if (key === "name") {
-    return "Name";
+    return current?.opcode === "py.importFrom" ? "Imported name" : "Name";
+  }
+  if (key === "module") {
+    return "Module";
   }
   if (key === "var") {
-    return "Variable";
+    return current?.opcode === "py.for" ? "Loop variable" : "Variable";
   }
   if (key === "field") {
     return "Member";
@@ -177,7 +239,7 @@ function flush(opts: { paramDelta?: number; argDelta?: number } = {}): void {
     }
   });
   if (opts.paramDelta === 1) {
-    params.push({ type: "int", name: `arg${params.length + 1}` });
+    params.push({ type: language === "python" ? "Any" : "int", name: `arg${params.length + 1}` });
   } else if (opts.paramDelta === -1 && params.length) {
     params = params.slice(0, -1);
   }

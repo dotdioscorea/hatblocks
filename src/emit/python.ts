@@ -60,9 +60,9 @@ function emitStmt(block: Block, indent: number): string[] {
   const p = pad(indent);
   switch (block.opcode) {
     case "py.import":
-      return [`${p}import ${block.fields.module || "sys"}`];
+      return [`${p}import ${expr(block.values.module) || block.fields.module || "sys"}`];
     case "py.importFrom":
-      return [`${p}from ${block.fields.module || "os"} import ${block.fields.name || "*"}`];
+      return [`${p}from ${expr(block.values.module) || block.fields.module || "os"} import ${expr(block.values.name) || block.fields.name || "*"}`];
     case "looks.say":
       return [`${p}print(${expr(block.values.message)}${extra(block)})`];
     case "looks.ask":
@@ -199,6 +199,10 @@ function expr(value: Block | Literal | undefined): string {
       const args = (value.extraArgs ?? []).map((a) => expr(a)).join(", ");
       return `${value.fields.name || "fn"}(${args})`;
     }
+    case "py.list":
+      return `[${(value.extraArgs ?? []).map((a) => expr(a)).join(", ")}]`;
+    case "py.tuple":
+      return `(${(value.extraArgs ?? []).map((a) => expr(a)).join(", ")})`;
     default:
       return "None";
   }

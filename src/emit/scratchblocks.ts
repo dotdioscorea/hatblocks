@@ -91,7 +91,10 @@ function substitute(template: string, block: Block): string {
   });
   if (block.opcode === "type.tmpl" && block.extraArgs?.length) {
     const more = block.extraArgs.map((a) => emitValue(a)).join(" , ");
-    return replaced.replace(/\s*>/, ` , ${more} >`);
+    if (/\s*>/.test(replaced)) {
+      return replaced.replace(/\s*>/, ` , ${more} >`);
+    }
+    return replaced.replace(/\s*\)(\s*::|\s*$)/, ` , ${more} )$1`);
   }
   if (extra) {
     return replaced.replace(/\s*::/, ` ${extra}::`);
