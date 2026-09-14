@@ -10,7 +10,7 @@ import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor, InspectorMutation } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
 import { hitMark, marksFromSvg, type Mark } from "./layout";
-import { paintHover, paintSelect } from "./highlight";
+import { clearHoverGlows, paintHover, paintSelect } from "./highlight";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
@@ -25,6 +25,7 @@ let zoom = 1;
 let libraryProto: Block | undefined;
 let dragging = false;
 let hoverKey = "";
+const marksCache = new WeakMap<SVGElement, Mark[]>();
 
 const app = document.createElement("div");
 app.id = "app";
@@ -148,6 +149,7 @@ stageWrap.addEventListener("pointerdown", (event) => {
   if ((event.target as HTMLElement).closest(".script")) {
     return;
   }
+  clearHover();
   panning = { x: panX, y: panY, px: event.clientX, py: event.clientY };
   stageWrap.classList.add("panning");
   stageWrap.setPointerCapture(event.pointerId);
@@ -265,7 +267,16 @@ function renderScripts(): void {
 function marksForScript(script: Script): Mark[] {
   const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
   const svg = el?.querySelector("svg") as SVGElement | null;
-  return marksFromSvg(script.root, svg, SCALE);
+  if (!svg) {
+    return marksFromSvg(script.root, null, SCALE);
+  }
+  const cached = marksCache.get(svg);
+  if (cached) {
+    return cached;
+  }
+  const marks = marksFromSvg(script.root, svg, SCALE);
+  marksCache.set(svg, marks);
+  return marks;
 }
 
 function renderGutter(): void {
@@ -356,13 +367,9 @@ function scriptSvg(scriptId: string): SVGSVGElement | null {
   return world.querySelector(`.script[data-id="${scriptId}"] svg`) as SVGSVGElement | null;
 }
 
-function clearHover(scriptId: string): void {
+function clearHover(_scriptId?: string): void {
   hoverKey = "";
-  const svg = scriptSvg(scriptId);
-  if (!svg) {
-    return;
-  }
-  paintHover(svg, undefined, []);
+  clearHoverGlows(world);
 }
 
 function hoverScript(scriptId: string, event: PointerEvent): void {
@@ -511,10 +518,8 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
   const startY = script.y;
   const px = event.clientX;
   const py = event.clientY;
-  const host = event.currentTarget as HTMLElement;
-  host.setPointerCapture(event.pointerId);
   dragging = true;
-  clearHover(scriptId);
+  clearHover();
 
   const move = (ev: PointerEvent) => {
     const dist = Math.hypot(ev.clientX - px, ev.clientY - py);
@@ -553,11 +558,10 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
     el.style.left = `${dragScript.x}px`;
     el.style.top = `${dragScript.y}px`;
     showSnap(dragScript);
-    renderGutter();
   };
   const up = (ev: PointerEvent) => {
-    host.removeEventListener("pointermove", move);
-    host.removeEventListener("pointerup", up);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
     dragging = false;
     const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
     el?.classList.remove("dragging");
@@ -579,8 +583,8 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
       applyPan();
     }
   };
-  host.addEventListener("pointermove", move);
-  host.addEventListener("pointerup", up);
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
 }
 
 function scriptAt(worldPt: { x: number; y: number }, exclude?: string): Script | undefined {

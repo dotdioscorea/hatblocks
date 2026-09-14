@@ -62,8 +62,16 @@ html, body {
 }
 .script.dragging { cursor: grabbing; z-index: 20; opacity: 0.92; }
 
-.hb-hl {
-  pointer-events: none;
+.hb-glow-hover {
+  filter:
+    drop-shadow(0 0 1px #fff4b0)
+    drop-shadow(0 0 3px #ffe566)
+    drop-shadow(0 0 8px rgba(255, 229, 102, 0.75));
+}
+.hb-glow-select {
+  filter:
+    drop-shadow(0 0 1px var(--vscode-focusBorder, #4daafc))
+    drop-shadow(0 0 4px var(--vscode-focusBorder, #4daafc));
 }
 
 .snap-guide {
