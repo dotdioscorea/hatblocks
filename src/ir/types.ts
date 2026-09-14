@@ -70,6 +70,8 @@ export interface Script {
   x: number;
   y: number;
   root: Block;
+  /** Blank lines to emit/show before this stack. 0 for the first; at least 1 between stacks. */
+  gapBefore?: number;
 }
 
 export interface Sprite {

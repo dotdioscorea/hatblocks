@@ -15,7 +15,8 @@ import { clearHoverGlows, paintHover, paintSelect } from "./highlight";
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
 const COLUMN_X = 12;
-const GAP = 18;
+const LINE_H = 22;
+const SNAP = 36;
 
 let program: Program | undefined;
 let selectedId: string | undefined;
@@ -27,15 +28,6 @@ let libraryProto: Block | undefined;
 let dragging = false;
 let hoverKey = "";
 const marksCache = new WeakMap<SVGElement, Mark[]>();
-let dropKey = "";
-let mouthPreview: {
-  host: Block;
-  slot: string;
-  after?: Block;
-  inserted: Block;
-  tail: Block;
-  savedTailNext: Block | undefined;
-} | undefined;
 
 const app = document.createElement("div");
 app.id = "app";
@@ -149,8 +141,13 @@ canvasEl.addEventListener("drop", (event) => {
 
 stageWrap.addEventListener("wheel", (event) => {
   event.preventDefault();
-  const factor = event.deltaY > 0 ? 0.92 : 1.08;
-  zoom = Math.min(2.4, Math.max(0.35, zoom * factor));
+  if (event.metaKey || event.ctrlKey) {
+    const factor = event.deltaY > 0 ? 0.92 : 1.08;
+    zoom = Math.min(2.4, Math.max(0.35, zoom * factor));
+  } else {
+    panY -= event.deltaY;
+    panX -= event.deltaX;
+  }
   applyPan();
 }, { passive: false });
 
@@ -179,6 +176,24 @@ stageWrap.addEventListener("pointerup", () => {
 
 window.addEventListener("keydown", (event) => {
   const mod = event.metaKey || event.ctrlKey;
+  if (mod && (event.key === "=" || event.key === "+" || event.code === "Equal")) {
+    event.preventDefault();
+    zoom = Math.min(2.4, zoom * 1.1);
+    applyPan();
+    return;
+  }
+  if (mod && (event.key === "-" || event.code === "Minus")) {
+    event.preventDefault();
+    zoom = Math.max(0.35, zoom / 1.1);
+    applyPan();
+    return;
+  }
+  if (mod && event.key === "0") {
+    event.preventDefault();
+    zoom = 1;
+    applyPan();
+    return;
+  }
   if (mod && event.key.toLowerCase() === "z") {
     event.preventDefault();
     post({ type: event.shiftKey ? "redo" : "undo" });
@@ -223,37 +238,49 @@ function renderAll(): void {
   applyPan();
 }
 
-function packColumn(): void {
+function scriptHeight(script: Script): number {
+  const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+  return el?.offsetHeight ?? 72;
+}
+
+function packVertically(): void {
   if (!program) {
     return;
   }
   let y = 12;
-  for (const script of program.sprites[0].scripts) {
+  const scripts = program.sprites[0].scripts;
+  for (let i = 0; i < scripts.length; i++) {
+    const script = scripts[i];
     script.x = COLUMN_X;
+    const gap = i === 0 ? 0 : Math.max(1, script.gapBefore ?? 1);
+    script.gapBefore = gap;
+    if (i > 0) {
+      y += gap * LINE_H;
+    }
     script.y = y;
-    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
-    y += (el?.offsetHeight ?? 72) + GAP;
+    y += scriptHeight(script);
   }
 }
 
-function packVertically(): void {
-  packColumn();
-}
-
-function applyColumnPositions(): void {
+function enforceMinGaps(): void {
   if (!program) {
     return;
   }
-  packColumn();
-  for (const script of program.sprites[0].scripts) {
-    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
-    if (!el) {
+  const scripts = [...program.sprites[0].scripts].sort((a, b) => a.y - b.y || a.x - b.x);
+  program.sprites[0].scripts = scripts;
+  for (let i = 0; i < scripts.length; i++) {
+    if (i === 0) {
+      scripts[i].gapBefore = 0;
       continue;
     }
-    el.style.left = `${script.x}px`;
-    el.style.top = `${script.y}px`;
+    const prev = scripts[i - 1];
+    const prevBottom = prev.y + scriptHeight(prev);
+    const minY = prevBottom + LINE_H;
+    if (scripts[i].y < minY) {
+      scripts[i].y = minY;
+    }
+    scripts[i].gapBefore = Math.max(1, Math.round((scripts[i].y - prevBottom) / LINE_H));
   }
-  renderGutter();
 }
 
 function renderScripts(): void {
@@ -283,9 +310,62 @@ function renderScripts(): void {
     });
     world.appendChild(el);
   }
+  renderGaps();
   hoverKey = "";
   paintSelection();
   renderGutter();
+}
+
+function renderGaps(): void {
+  if (!program) {
+    return;
+  }
+  world.querySelectorAll(".gap-ui").forEach((el) => el.remove());
+  const scripts = [...program.sprites[0].scripts].sort((a, b) => a.y - b.y);
+  for (let i = 1; i < scripts.length; i++) {
+    const prev = scripts[i - 1];
+    const curr = scripts[i];
+    const top = prev.y + scriptHeight(prev);
+    const height = curr.y - top;
+    if (height < 8) {
+      continue;
+    }
+    const gap = Math.max(1, curr.gapBefore ?? Math.round(height / LINE_H) ?? 1);
+    const ui = document.createElement("div");
+    ui.className = "gap-ui";
+    ui.style.left = `${Math.min(prev.x, curr.x)}px`;
+    ui.style.top = `${top}px`;
+    ui.style.height = `${height}px`;
+    ui.innerHTML = `<button type="button" class="gap-btn" data-act="add" title="Add a blank line">+</button><button type="button" class="gap-btn" data-act="remove" title="Remove a blank line" ${gap <= 1 ? "disabled" : ""}>−</button>`;
+    ui.addEventListener("pointerdown", (event) => event.stopPropagation());
+    ui.querySelector('[data-act="add"]')?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      bumpGap(curr, 1);
+    });
+    ui.querySelector('[data-act="remove"]')?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      bumpGap(curr, -1);
+    });
+    world.appendChild(ui);
+  }
+}
+
+function bumpGap(script: Script, delta: number): void {
+  if (!program) {
+    return;
+  }
+  const next = Math.max(1, (script.gapBefore ?? 1) + delta);
+  if (next === (script.gapBefore ?? 1) && delta < 0) {
+    return;
+  }
+  const dy = (next - (script.gapBefore ?? 1)) * LINE_H;
+  script.gapBefore = next;
+  for (const other of program.sprites[0].scripts) {
+    if (other.y >= script.y) {
+      other.y += dy;
+    }
+  }
+  commit();
 }
 
 function marksForScript(script: Script): Mark[] {
@@ -538,11 +618,12 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
 
   let dragScript = script;
   let split = false;
+  let moved = false;
+  const startX = script.x;
+  const startY = script.y;
   const px = event.clientX;
   const py = event.clientY;
   dragging = true;
-  dropKey = "";
-  mouthPreview = undefined;
   clearHover();
 
   const move = (ev: PointerEvent) => {
@@ -550,56 +631,56 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
     if (dist < 8) {
       return;
     }
+    moved = true;
     if (!split && origin !== script.root) {
       unlink(script.root, origin);
-      dragScript = { id: createIdFactory("s")(), x: COLUMN_X, y: script.y, root: origin };
+      const placed = clientToWorld(ev.clientX, ev.clientY);
+      dragScript = { id: createIdFactory("s")(), x: placed.x, y: placed.y, root: origin, gapBefore: 1 };
       program!.sprites[0].scripts.push(dragScript);
       selectedId = dragScript.id;
       selectedBlockId = origin.id;
       split = true;
+      renderScripts();
     }
     const pt = clientToWorld(ev.clientX, ev.clientY);
-    if (isReporterish(dragScript.root)) {
-      dragScript.x = pt.x;
-      dragScript.y = pt.y;
-      const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
-      if (el) {
-        el.style.left = `${dragScript.x}px`;
-        el.style.top = `${dragScript.y}px`;
-      }
+    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
+    if (!el) {
       return;
     }
-    const target = findDrop(pt, dragScript);
-    const key = target ? dropTargetKey(target) : "free";
-    if (key === dropKey) {
-      return;
+    el.classList.add("dragging");
+    if (split || origin === script.root) {
+      dragScript.x = split ? pt.x : startX + (ev.clientX - px) / zoom;
+      dragScript.y = split ? pt.y : startY + (ev.clientY - py) / zoom;
     }
-    dropKey = key;
-    applyDropPreview(dragScript, target);
+    el.style.left = `${dragScript.x}px`;
+    el.style.top = `${dragScript.y}px`;
+    showSnap(dragScript);
   };
   const up = (ev: PointerEvent) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     dragging = false;
+    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
+    el?.classList.remove("dragging");
+    const snap = findMouthSnap(dragScript);
     hideSnap();
-    const pt = clientToWorld(ev.clientX, ev.clientY);
+    if (!moved) {
+      return;
+    }
     if (isReporterish(dragScript.root)) {
-      const over = scriptAt(pt, dragScript.id);
+      const over = scriptAt(clientToWorld(ev.clientX, ev.clientY), dragScript.id);
       if (over && plugInto(over, dragScript.root, ev)) {
         program!.sprites[0].scripts = program!.sprites[0].scripts.filter((s) => s.id !== dragScript.id);
-        mouthPreview = undefined;
-        dropKey = "";
         commit();
         return;
       }
     }
-    const didDrag = dropKey !== "";
-    mouthPreview = undefined;
-    dropKey = "";
-    if (didDrag) {
-      packColumn();
-      commit();
+    if (snap && !isReporterish(dragScript.root)) {
+      snap.apply(dragScript);
+      return;
     }
+    enforceMinGaps();
+    commit();
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -688,11 +769,16 @@ function insertBlockAt(proto: Block, x: number, y: number): void {
     void fake;
   }
   dummy.id = createIdFactory("s")();
-  dummy.x = COLUMN_X;
+  dummy.gapBefore = 1;
   program.sprites[0].scripts.push(dummy);
-  applyDropPreview(dummy, findDrop({ x, y }, dummy));
+  const snap = findMouthSnap(dummy);
+  if (snap && !isReporterish(root)) {
+    snap.apply(dummy);
+    return;
+  }
   selectedId = dummy.id;
   selectedBlockId = root.id;
+  enforceMinGaps();
   commit();
 }
 
@@ -741,89 +827,39 @@ function chainHas(block: Block, opcode: string): boolean {
   return false;
 }
 
-type DropTarget =
-  | { kind: "between"; index: number }
-  | { kind: "mouth"; host: Block; slot: string; after?: Block };
-
-function dropTargetKey(target: DropTarget): string {
-  if (target.kind === "between") {
-    return `between:${target.index}`;
-  }
-  return `mouth:${target.host.id}:${target.slot}:${target.after?.id ?? "head"}`;
+interface MouthSnap {
+  x: number;
+  y: number;
+  w: number;
+  apply: (dragged: Script) => void;
 }
 
-function restoreMouthPreview(): void {
-  if (!mouthPreview) {
-    return;
-  }
-  const { host, slot, after, inserted, tail, savedTailNext } = mouthPreview;
-  if (!after) {
-    host.branches[slot] = tail.next;
-  } else if (after.next === inserted) {
-    after.next = tail.next;
-  }
-  tail.next = savedTailNext;
-  mouthPreview = undefined;
-}
-
-function ensureDragScript(drag: Script): void {
+function takeDragged(dragged: Script): Block | undefined {
   if (!program) {
-    return;
-  }
-  if (!program.sprites[0].scripts.some((s) => s.id === drag.id)) {
-    program.sprites[0].scripts.push(drag);
-  }
-}
-
-function applyDropPreview(drag: Script, target: DropTarget | undefined): void {
-  if (!program) {
-    return;
-  }
-  restoreMouthPreview();
-  ensureDragScript(drag);
-  if (!target || target.kind === "between") {
-    const list = program.sprites[0].scripts.filter((s) => s.id !== drag.id);
-    const index = target?.kind === "between" ? target.index : list.length;
-    list.splice(Math.max(0, Math.min(index, list.length)), 0, drag);
-    program.sprites[0].scripts = list;
-    drag.x = COLUMN_X;
-    if (world.querySelector(`.script[data-id="${drag.id}"]`)) {
-      applyColumnPositions();
-    } else {
-      packColumn();
-      renderScripts();
-    }
-    return;
-  }
-  program.sprites[0].scripts = program.sprites[0].scripts.filter((s) => s.id !== drag.id);
-  const tail = lastBlock(drag.root);
-  const savedTailNext = tail.next;
-  if (!target.after) {
-    tail.next = target.host.branches[target.slot];
-    target.host.branches[target.slot] = drag.root;
-  } else {
-    tail.next = target.after.next;
-    target.after.next = drag.root;
-  }
-  mouthPreview = {
-    host: target.host,
-    slot: target.slot,
-    after: target.after,
-    inserted: drag.root,
-    tail,
-    savedTailNext,
-  };
-  packColumn();
-  renderScripts();
-}
-
-function findDrop(worldPt: { x: number; y: number }, drag: Script): DropTarget | undefined {
-  if (!program || drag.root.shape === "hat" || isReporterish(drag.root)) {
     return undefined;
   }
-  const scripts = program.sprites[0].scripts;
-  for (const other of scripts) {
-    if (other.id === drag.id) {
+  program.sprites[0].scripts = program.sprites[0].scripts.filter((s) => s.id !== dragged.id);
+  return dragged.root;
+}
+
+function findMouthSnap(moving: Script): MouthSnap | undefined {
+  if (!program || moving.root.shape === "hat" || isReporterish(moving.root)) {
+    return undefined;
+  }
+  const movingEl = world.querySelector(`.script[data-id="${moving.id}"]`) as HTMLElement | null;
+  const mw = movingEl?.offsetWidth ?? 160;
+  let best: { snap: MouthSnap; dist: number } | undefined;
+  const consider = (dist: number, snap: MouthSnap): void => {
+    if (dist > SNAP) {
+      return;
+    }
+    if (!best || dist < best.dist) {
+      best = { snap, dist };
+    }
+  };
+  const indent = 16 * SCALE;
+  for (const other of program.sprites[0].scripts) {
+    if (other.id === moving.id) {
       continue;
     }
     const marks = marksForScript(other);
@@ -831,43 +867,77 @@ function findDrop(worldPt: { x: number; y: number }, drag: Script): DropTarget |
       if (mark.block.shape !== "c" && mark.block.shape !== "c2") {
         continue;
       }
-      if (findBlock(drag.root, mark.block.id)) {
+      if (findBlock(moving.root, mark.block.id)) {
         continue;
       }
-      const relY = worldPt.y - other.y;
-      const relX = worldPt.x - other.x;
-      if (relY < mark.y - 8 || relY > mark.y + mark.h + 12 || relX < -24 || relX > Math.max(280, mark.h)) {
-        continue;
+      const host = mark.block;
+      const mouthX = other.x + indent;
+      const slots: Array<{ slot: string; top: number }> = [{ slot: "body", top: other.y + mark.y + mark.headerH }];
+      if (mark.block.shape === "c2") {
+        slots.push({ slot: "else", top: other.y + mark.y + mark.h * 0.55 });
       }
-      const slot = mark.block.shape === "c2" && relY > mark.y + mark.h * 0.55 ? "else" : "body";
-      let after: Block | undefined;
-      let inner: Block | undefined = mark.block.branches[slot];
-      while (inner) {
-        if (inner === drag.root || findBlock(drag.root, inner.id)) {
+      for (const { slot, top } of slots) {
+        const w = Math.max(72, mw * 0.7);
+        consider(Math.hypot(moving.x - mouthX, moving.y - top), {
+          x: mouthX,
+          y: top - 4,
+          w,
+          apply: (dragged) => {
+            const root = takeDragged(dragged);
+            if (!root) {
+              return;
+            }
+            const tail = lastBlock(root);
+            tail.next = host.branches[slot];
+            host.branches[slot] = root;
+            commit();
+          },
+        });
+        let inner: Block | undefined = host.branches[slot];
+        while (inner) {
+          const im = marks.find((m) => m.block.id === inner!.id);
+          if (im && inner.shape !== "cap") {
+            const ay = other.y + im.y + im.h - 6;
+            const block = inner;
+            consider(Math.hypot(moving.x - mouthX, moving.y - ay), {
+              x: mouthX,
+              y: ay,
+              w,
+              apply: (dragged) => {
+                const root = takeDragged(dragged);
+                if (!root) {
+                  return;
+                }
+                const tail = lastBlock(root);
+                tail.next = block.next;
+                block.next = root;
+                commit();
+              },
+            });
+          }
           inner = inner.next;
-          continue;
         }
-        const im = marks.find((m) => m.block.id === inner!.id);
-        if (im && relY > other.y + im.y + im.h / 2 - other.y) {
-          after = inner;
-        }
-        inner = inner.next;
       }
-      return { kind: "mouth", host: mark.block, slot, after };
     }
   }
-  const others = scripts.filter((s) => s.id !== drag.id);
-  let index = others.length;
-  for (let i = 0; i < others.length; i++) {
-    const el = world.querySelector(`.script[data-id="${others[i].id}"]`) as HTMLElement | null;
-    const h = el?.offsetHeight ?? 72;
-    const mid = others[i].y + h / 2;
-    if (worldPt.y < mid) {
-      index = i;
-      break;
-    }
+  return best?.snap;
+}
+
+function showSnap(moving: Script): void {
+  const notch = document.getElementById("snapNotch") as SVGSVGElement | null;
+  const snap = findMouthSnap(moving);
+  if (!snap || !notch || isReporterish(moving.root)) {
+    hideSnap();
+    return;
   }
-  return { kind: "between", index };
+  const w = snap.w;
+  notch.setAttribute("width", String(w));
+  notch.setAttribute("height", "16");
+  notch.style.left = `${panX + snap.x * zoom}px`;
+  notch.style.top = `${panY + snap.y * zoom}px`;
+  notch.innerHTML = `<path d="M0 4 H12 C16 4 16 12 22 12 H36 C42 12 42 4 48 4 H${w}" fill="none" stroke="#fff04d" stroke-width="3" stroke-linecap="round"/>`;
+  notch.classList.add("show");
+  guide.classList.remove("show");
 }
 
 function hideSnap(): void {

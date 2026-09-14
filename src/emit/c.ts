@@ -51,7 +51,8 @@ export function emitC(program: Program): string {
             paramList: plist || "void",
           });
         } else if (current.opcode === "custom.define" || current.opcode === "c.fn") {
-          functions.push(emitDefined(current, needed));
+          const extra = Math.max(0, (script.gapBefore ?? 1) - 1);
+          functions.push(`${"\n".repeat(extra)}${emitDefined(current, needed)}`);
         } else if (current.opcode === "control.label") {
           functions.push(emitFunction(sanitizeIdent(current.fields.label || "label"), [], fnBody(current), { needed, isMain: false, returnType: "void" }));
         } else if (current.opcode === "cpp.class" || current.opcode === "cpp.namespace") {

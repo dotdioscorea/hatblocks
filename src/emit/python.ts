@@ -7,11 +7,17 @@ export function emitPython(program: Program): string {
 
   for (const script of scripts) {
     const src = emitChain(script.root, 0).join("\n");
-    if (src.trim()) {
+    if (!src.trim()) {
+      continue;
+    }
+    if (parts.length) {
+      const gap = Math.max(1, script.gapBefore ?? 1);
+      parts.push("\n".repeat(gap + 1) + src);
+    } else {
       parts.push(src);
     }
   }
-  return `${parts.filter((p) => p.trim()).join("\n\n")}\n`;
+  return `${parts.join("")}\n`;
 }
 
 function emitChain(head: Block | undefined, indent: number): string[] {

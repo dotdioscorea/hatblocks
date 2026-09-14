@@ -62,6 +62,33 @@ html, body {
 }
 .script.dragging { cursor: grabbing; z-index: 20; opacity: 0.92; }
 
+.gap-ui {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding-left: 8px;
+  z-index: 8;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.gap-ui:hover { opacity: 1; }
+.gap-btn {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+  color: var(--vscode-editor-foreground);
+  border-radius: 4px;
+  cursor: pointer;
+  font: 13px var(--vscode-font-family);
+  line-height: 1;
+  padding: 0;
+}
+.gap-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.gap-btn:disabled { opacity: 0.35; cursor: default; }
+
 path.hb-glow-hover {
   fill: none !important;
   stroke: #ffe566;
