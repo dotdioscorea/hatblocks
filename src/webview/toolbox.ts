@@ -47,9 +47,11 @@ window.addEventListener("message", (event: MessageEvent<HostToToolbox>) => {
 function render(): void {
   toggle.textContent = blocksMode ? "Blocks" : "Text";
   toggle.classList.toggle("on", blocksMode);
-  toggle.title = blocksMode ? "Switch all C files back to text" : "Edit all C files as blocks";
+  toggle.title = blocksMode
+    ? "Switch this file back to text"
+    : "Edit this file as blocks";
   if (!blocksMode) {
-    content.innerHTML = `<div class="hint">Turn on <b>Blocks</b> to edit open C files on the stage. The parts palette lives here; the file stays in the editor.</div>`;
+    content.innerHTML = `<div class="hint">Turn on <b>Blocks</b> to edit <i>this file</i> on the stage. Other open files stay as they are.</div>`;
     return;
   }
   if (!program || program.toolbox.length === 0) {

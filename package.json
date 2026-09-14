@@ -35,7 +35,7 @@
     "commands": [
       {
         "command": "hatblocks.toggleMode",
-        "title": "Toggle Blocks Mode",
+        "title": "Toggle Blocks for This File",
         "category": "Hatblocks",
         "icon": {
           "light": "media/toggle.svg",
@@ -137,7 +137,7 @@
         "hatblocks.blocksMode": {
           "type": "boolean",
           "default": false,
-          "description": "Open C files as Hatblocks instead of text. Toggles every matching editor."
+          "description": "Deprecated. Blocks vs text is per file (title-bar toggle). This setting is ignored."
         },
         "hatblocks.maxBlocks": {
           "type": "number",

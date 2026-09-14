@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import type { HatblocksHub } from "./hub";
-import { blocksModeEnabled, toggleBlocksMode } from "./mode";
+import { activeSupportedFile, type HatblocksMode } from "./mode";
 import type { ToolboxToHost } from "./protocol";
 import { webviewHtml } from "./webviewHtml";
 import { cloneBlock } from "./ir/clone";
@@ -10,6 +10,7 @@ export class HatblocksToolboxProvider implements vscode.WebviewViewProvider {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly hub: HatblocksHub,
+    private readonly mode: HatblocksMode,
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
@@ -22,12 +23,14 @@ export class HatblocksToolboxProvider implements vscode.WebviewViewProvider {
 
     view.webview.onDidReceiveMessage(async (msg: ToolboxToHost) => {
       switch (msg.type) {
-        case "ready":
-          this.hub.refreshToolbox(undefined, blocksModeEnabled());
+        case "ready": {
+          const file = activeSupportedFile();
+          this.hub.refreshForActive(file?.isBlocks ?? false);
           break;
+        }
         case "toggleMode":
-          await toggleBlocksMode();
-          this.hub.refreshToolbox(undefined, blocksModeEnabled());
+          await this.mode.toggleActive();
+          this.hub.refreshForActive(activeSupportedFile()?.isBlocks ?? false);
           break;
         case "dragStart":
           this.hub.beginLibraryDrag(cloneBlock(msg.block, createIdFactory("ins")));
@@ -36,7 +39,7 @@ export class HatblocksToolboxProvider implements vscode.WebviewViewProvider {
           const block = cloneBlock(msg.block, createIdFactory("ins"));
           const ok = this.hub.insertIntoActive(block);
           if (!ok) {
-            void vscode.window.showInformationMessage("Open a supported file in Blocks mode, then drag a part onto the stage.");
+            void vscode.window.showInformationMessage("Open this file in Blocks mode, then drag a part onto the stage.");
           }
           break;
         }
@@ -48,5 +51,3 @@ export class HatblocksToolboxProvider implements vscode.WebviewViewProvider {
     });
   }
 }
-
-

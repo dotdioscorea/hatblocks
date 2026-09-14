@@ -1,17 +1,16 @@
 import * as vscode from "vscode";
 import { emitDocument, parseDocument } from "./parse";
 import type { HatblocksHub } from "./hub";
-import { EDITOR_VIEW_TYPE } from "./mode";
+import { EDITOR_VIEW_TYPE, type HatblocksMode } from "./mode";
 import type { EditorToHost } from "./protocol";
 import { runCDocument } from "./run";
 import { webviewHtml } from "./webviewHtml";
-import { blocksModeEnabled } from "./mode";
 
 export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider {
-  static register(context: vscode.ExtensionContext, hub: HatblocksHub): vscode.Disposable {
+  static register(context: vscode.ExtensionContext, hub: HatblocksHub, mode: HatblocksMode): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
       EDITOR_VIEW_TYPE,
-      new HatblocksEditorProvider(context, hub),
+      new HatblocksEditorProvider(context, hub, mode),
       {
         webviewOptions: { retainContextWhenHidden: true },
         supportsMultipleEditorsPerDocument: false,
@@ -22,6 +21,7 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly hub: HatblocksHub,
+    private readonly mode: HatblocksMode,
   ) {}
 
   async resolveCustomTextEditor(
@@ -37,6 +37,7 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
     };
     panel.webview.html = webviewHtml(panel.webview, this.context.extensionUri, "editor.js");
     console.log("[hatblocks] resolveCustomTextEditor", document.uri.toString());
+    void this.mode.remember(document.uri, true);
 
     let applying = false;
     let ready = false;
@@ -53,7 +54,8 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
     const sendProgram = async (): Promise<void> => {
       const program = await parseDocument(this.context, document);
       panel.webview.postMessage({ type: "setProgram", program });
-      this.hub.refreshToolbox(program, blocksModeEnabled(), document.fileName);
+      this.hub.setProgram(document.uri, program);
+      this.hub.refreshToolbox(program, true, document.fileName);
     };
 
     const subs = [
@@ -74,7 +76,8 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
             edit.replace(document.uri, full, text);
             await vscode.workspace.applyEdit(edit);
             applying = false;
-            this.hub.refreshToolbox(msg.program, blocksModeEnabled(), document.fileName);
+            this.hub.setProgram(document.uri, msg.program);
+            this.hub.refreshToolbox(msg.program, true, document.fileName);
             break;
           }
           case "run":
@@ -108,6 +111,7 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
       panel.onDidChangeViewState((e) => {
         if (e.webviewPanel.active) {
           void vscode.commands.executeCommand("setContext", "hatblocks.editorFocus", true);
+          this.hub.refreshForActive(true);
         }
       }),
       panel.onDidDispose(() => {

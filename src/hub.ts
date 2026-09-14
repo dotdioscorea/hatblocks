@@ -37,17 +37,22 @@ export class HatblocksHub {
     }
   }
 
+  private readonly programs = new Map<string, Program>();
+
+  setProgram(uri: vscode.Uri, program: Program): void {
+    this.programs.set(uri.toString(), program);
+  }
+
   activeEditor(): EditorSession | undefined {
-    const uri = vscode.window.activeTextEditor?.document.uri;
-    if (uri && this.editors.has(uri.toString())) {
-      return this.editors.get(uri.toString());
-    }
     const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
     const input = tab?.input;
     if (input instanceof vscode.TabInputCustom) {
       return this.editors.get(input.uri.toString());
     }
-    return [...this.editors.values()][0];
+    if (input instanceof vscode.TabInputText) {
+      return this.editors.get(input.uri.toString());
+    }
+    return undefined;
   }
 
   beginLibraryDrag(block: Block): void {
@@ -87,6 +92,20 @@ export class HatblocksHub {
         stats: { scripts: 0, blocks: 0, truncated: false },
       } satisfies Program);
     this.postToolbox({ type: "setToolbox", program: payload, blocksMode, fileName });
+  }
+
+  refreshForActive(blocksMode: boolean): void {
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const input = tab?.input;
+    const uri =
+      input instanceof vscode.TabInputCustom
+        ? input.uri
+        : input instanceof vscode.TabInputText
+          ? input.uri
+          : undefined;
+    const program = uri ? this.programs.get(uri.toString()) : undefined;
+    const fileName = uri?.fsPath.split(/[\\/]/).pop();
+    this.refreshToolbox(program, blocksMode, fileName);
   }
 
   setSelection(state: InspectorState): void {
