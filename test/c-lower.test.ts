@@ -64,7 +64,7 @@ test("toolbox is C syntax groups, not Scratch motion/sound", async () => {
   assert.ok(ids.includes("control"));
   assert.ok(ids.includes("operators"));
   assert.ok(ids.includes("extension"));
-  assert.ok(!ids.includes("motion"));
+  assert.ok(ids.includes("motion"));
   assert.ok(!ids.includes("sound"));
   assert.ok(labels.includes("Pre") || labels.includes("Func") || labels.includes("Functions"));
   const preproc = program.toolbox.find((c) => c.id === "extension");

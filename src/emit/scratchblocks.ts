@@ -89,6 +89,10 @@ function substitute(template: string, block: Block): string {
     }
     return emitValue(value);
   });
+  if (block.opcode === "type.tmpl" && block.extraArgs?.length) {
+    const more = block.extraArgs.map((a) => emitValue(a)).join(" , ");
+    return replaced.replace(/\s*>/, ` , ${more} >`);
+  }
   if (extra) {
     return replaced.replace(/\s*::/, ` ${extra}::`);
   }
@@ -127,5 +131,7 @@ function indent(lines: string[]): string[] {
 }
 
 function escapeScratch(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/[[\]()<>]/g, "\\$&");
+  // scratchblocks treats `::` as a category/flag marker, so `std::cout`
+  // must never appear raw in a label.
+  return text.replace(/\\/g, "\\\\").replace(/[[\]()<>{}]/g, "\\$&").replace(/::/g, ": :");
 }

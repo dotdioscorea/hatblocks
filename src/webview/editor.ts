@@ -3,16 +3,17 @@ import { emitProgram } from "../emit/scratchblocks";
 import { cloneBlock, lastBlock } from "../ir/clone";
 import { createIdFactory, recomputeStats } from "../ir/ids";
 import { isLiteral, litEmpty } from "../ir/builders";
-import { rebuildHat, rebuildCall, C_TYPES, PY_TYPES } from "../library/hats";
-import { findBlock, unlink } from "../ir/tree";
+import { rebuildHat, rebuildCall, rebuildForRange, rebuildLambda } from "../library/hats";
+import { CATALOG_BY_OPCODE, prototypeFromDef } from "../library/catalog";
+import { findBlock, findInProgram, unlink } from "../ir/tree";
 import type { Block, Literal, Program, Script } from "../ir/types";
-import type { EditorToHost, HostToEditor } from "../protocol";
+import type { EditorToHost, HostToEditor, InspectorMutation } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
-import { layoutMarks, hitMark, scaleMarks, type Mark } from "./layout";
+import { hitMark, marksFromSvg, type Mark } from "./layout";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
-const SNAP = 22;
+const SNAP = 28;
 
 let program: Program | undefined;
 let selectedId: string | undefined;
@@ -21,6 +22,7 @@ let panX = 16;
 let panY = 16;
 let zoom = 1;
 let libraryProto: Block | undefined;
+let dragging = false;
 
 const app = document.createElement("div");
 app.id = "app";
@@ -32,6 +34,7 @@ app.innerHTML = `
         <div class="world" id="world"></div>
         <div class="snap-guide" id="guide"></div>
       </div>
+      <svg class="snap-notch" id="snapNotch" width="200" height="20"></svg>
     </div>
     <div class="hud">
       <button class="flag" id="run" title="Green flag — compile and run">
@@ -47,13 +50,8 @@ app.innerHTML = `
         <button type="button" id="delArg">− arg</button>
       </div>
     </div>
-    <div class="hint">Drag a block to tear it off. Snap to the glowing notch. Library parts drag in from the sidebar.</div>
-    <svg class="snap-notch" id="snapNotch" width="200" height="20"></svg>
+    <div class="hint">Hover outlines the stack that would tear off. Click to inspect. Drag from the Blocks sidebar; drop reporters into holes.</div>
   </div>
-  <aside class="inspector" id="inspector">
-    <h3>Inspector</h3>
-    <div id="inspectorBody"><p class="muted">Select a block.</p></div>
-  </aside>
 `;
 document.body.appendChild(app);
 const style = document.createElement("style");
@@ -80,11 +78,13 @@ post({ type: "ready" });
 window.addEventListener("message", (event: MessageEvent<HostToEditor>) => {
   const msg = event.data;
   if (msg.type === "setProgram") {
+    const keep = selectedBlockId;
     program = msg.program;
     selectedId = undefined;
-    selectedBlockId = undefined;
+    selectedBlockId = keep && findInProgram(program, keep) ? keep : undefined;
     packOnce = true;
     renderAll();
+    publishSelection();
   }
   if (msg.type === "insert") {
     insertBlock(msg.block);
@@ -94,6 +94,9 @@ window.addEventListener("message", (event: MessageEvent<HostToEditor>) => {
   }
   if (msg.type === "requestExport") {
     void exportPng();
+  }
+  if (msg.type === "applyMutation") {
+    applyMutation(msg.mutation);
   }
 });
 
@@ -161,11 +164,25 @@ stageWrap.addEventListener("pointerup", () => {
 });
 
 window.addEventListener("keydown", (event) => {
-  if ((event.key === "Backspace" || event.key === "Delete") && selectedId && program) {
-    const sprite = program.sprites[0];
-    sprite.scripts = sprite.scripts.filter((s) => s.id !== selectedId);
-    selectedId = undefined;
-    commit();
+  const mod = event.metaKey || event.ctrlKey;
+  if (mod && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    post({ type: event.shiftKey ? "redo" : "undo" });
+    return;
+  }
+  if (mod && event.key.toLowerCase() === "y") {
+    event.preventDefault();
+    post({ type: "redo" });
+    return;
+  }
+  if ((event.key === "Backspace" || event.key === "Delete") && selectedBlockId && program) {
+    const script = selectedId ? findScript(selectedId) : undefined;
+    if (script && script.root.id === selectedBlockId) {
+      program.sprites[0].scripts = program.sprites[0].scripts.filter((s) => s.id !== selectedId);
+      selectedId = undefined;
+      selectedBlockId = undefined;
+      commit();
+    }
   }
 });
 
@@ -219,26 +236,43 @@ function renderScripts(): void {
   const emitted = emitProgram(program);
   for (const script of emitted) {
     const el = document.createElement("div");
-    el.className = `script${script.id === selectedId ? " selected" : ""}`;
+    el.className = "script";
     el.dataset.id = script.id;
     el.style.left = `${script.x}px`;
     el.style.top = `${script.y}px`;
     el.appendChild(renderCodeSvg(script.code, SCALE));
+    el.appendChild(hl("hover"));
+    el.appendChild(hl("tail"));
+    el.appendChild(hl("select"));
     el.addEventListener("pointerdown", (event) => startBlockDrag(event, script.id));
+    el.addEventListener("pointermove", (event) => {
+      if (dragging) {
+        return;
+      }
+      hoverScript(script.id, event);
+    });
+    el.addEventListener("pointerleave", () => clearHover(script.id));
     el.addEventListener("dblclick", (event) => {
       event.preventDefault();
       editScript(script.id);
     });
     world.appendChild(el);
   }
+  paintSelection();
   renderGutter();
 }
 
+function hl(kind: string): HTMLDivElement {
+  const d = document.createElement("div");
+  d.className = `hl ${kind}`;
+  d.hidden = true;
+  return d;
+}
+
 function marksForScript(script: Script): Mark[] {
-  const laid = layoutMarks(script.root, 0);
   const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
-  const svgH = el?.offsetHeight ?? laid.height;
-  return scaleMarks(laid.marks, laid.height, svgH);
+  const svg = el?.querySelector("svg") as SVGElement | null;
+  return marksFromSvg(script.root, svg, SCALE);
 }
 
 function renderGutter(): void {
@@ -277,17 +311,10 @@ function findScript(id: string): Script | undefined {
 }
 
 function selectedRoot(): Block | undefined {
-  if (!selectedId) {
+  if (!program || !selectedBlockId) {
     return undefined;
   }
-  const script = findScript(selectedId);
-  if (!script) {
-    return undefined;
-  }
-  if (selectedBlockId) {
-    return findBlock(script.root, selectedBlockId) ?? script.root;
-  }
-  return script.root;
+  return findInProgram(program, selectedBlockId);
 }
 
 function isHat(block: Block): boolean {
@@ -295,7 +322,16 @@ function isHat(block: Block): boolean {
 }
 
 function isCall(block: Block): boolean {
-  return block.opcode === "custom.call" || block.opcode === "custom.reporter" || block.opcode === "looks.printf";
+  return block.opcode === "custom.call" || block.opcode === "custom.reporter" || block.opcode === "custom.method" || block.opcode === "custom.tmplCall";
+}
+
+function isReporterish(block: Block): boolean {
+  return block.shape === "reporter" || block.shape === "boolean";
+}
+
+function publishSelection(): void {
+  const block = selectedRoot() ?? null;
+  post({ type: "select", block, language: program?.language ?? "c", fileName: program?.fileName });
 }
 
 function updateMutator(): void {
@@ -304,7 +340,6 @@ function updateMutator(): void {
   const root = selectedRoot();
   if (!root || (!isHat(root) && !isCall(root))) {
     bar.classList.remove("show");
-    renderInspector();
     return;
   }
   bar.classList.add("show");
@@ -315,107 +350,60 @@ function updateMutator(): void {
     const n = root.extraArgs?.length ?? 0;
     label.textContent = n === 1 ? "1 argument" : `${n} arguments`;
   }
-  renderInspector();
 }
 
-function typeOptions(current: string): string {
-  const types = program?.language === "python" ? PY_TYPES.filter(Boolean) : C_TYPES;
-  const all = types.includes(current) ? types : [current, ...types];
-  return all.map((t) => `<option value="${escapeAttr(t)}"${t === current ? " selected" : ""}>${escapeAttr(t)}</option>`).join("");
-}
-
-function escapeAttr(text: string): string {
-  return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
-}
-
-function renderInspector(): void {
-  const body = document.getElementById("inspectorBody");
-  if (!body) {
+function setOverlay(el: HTMLElement | null, kind: string, y: number, h: number, show: boolean): void {
+  const node = el?.querySelector(`.hl.${kind}`) as HTMLElement | null;
+  if (!node) {
     return;
   }
-  const block = selectedRoot();
-  if (!block) {
-    body.innerHTML = `<p class="muted">Select a block.</p>`;
+  node.hidden = !show;
+  if (show) {
+    node.style.top = `${y - 2}px`;
+    node.style.height = `${Math.max(10, h + 4)}px`;
+  }
+}
+
+function clearHover(scriptId: string): void {
+  const el = world.querySelector(`.script[data-id="${scriptId}"]`) as HTMLElement | null;
+  setOverlay(el, "hover", 0, 0, false);
+  setOverlay(el, "tail", 0, 0, false);
+}
+
+function hoverScript(scriptId: string, event: PointerEvent): void {
+  const script = findScript(scriptId);
+  if (!script) {
     return;
   }
-  const bits: string[] = [`<p><b>${escapeAttr(block.opcode)}</b></p>`];
-  if (block.source) {
-    bits.push(`<p class="muted">Line ${block.source.start.line + 1}</p>`);
+  const worldPt = clientToWorld(event.clientX, event.clientY);
+  const hit = hitMark(marksForScript(script), worldPt.y - script.y);
+  const el = world.querySelector(`.script[data-id="${scriptId}"]`) as HTMLElement | null;
+  if (!hit) {
+    clearHover(scriptId);
+    return;
   }
-  if (isHat(block) || block.opcode === "py.class") {
-    bits.push(`<label>Return / kind</label><select id="inspRet">${typeOptions(block.fields.returnType || block.fields.type || "int")}</select>`);
-    bits.push(`<label>Name</label><input id="inspName" value="${escapeAttr(block.fields.name || "")}" />`);
-    bits.push(`<label>Parameters</label>`);
-    for (const [i, p] of (block.params ?? []).entries()) {
-      bits.push(`<div class="row"><select data-pi="${i}">${typeOptions(p.type)}</select><input data-pn="${i}" value="${escapeAttr(p.name)}" /></div>`);
-    }
-    bits.push(`<button type="button" id="inspAdd">+ parameter</button>`);
-  } else if (isCall(block)) {
-    bits.push(`<label>Callee</label><input id="inspName" value="${escapeAttr(block.fields.name || "")}" />`);
-    bits.push(`<p class="muted">${block.extraArgs?.length ?? 0} argument slots</p>`);
-    bits.push(`<button type="button" id="inspAdd">+ argument</button> <button type="button" id="inspDel">− argument</button>`);
-  } else if (block.fields.type || block.fields.var || block.fields.header) {
-    if (block.fields.type) {
-      bits.push(`<label>Type</label><select id="inspRet">${typeOptions(block.fields.type)}</select>`);
-    }
-    if (block.fields.var) {
-      bits.push(`<label>Name</label><input id="inspName" value="${escapeAttr(block.fields.var)}" />`);
-    }
-    if (block.fields.header) {
-      bits.push(`<label>Header</label><input id="inspName" value="${escapeAttr(block.fields.header)}" />`);
-    }
+  setOverlay(el, "hover", hit.y, hit.h, true);
+  const tailH = Math.max(0, hit.chainH - hit.h);
+  if (tailH > 8) {
+    setOverlay(el, "tail", hit.y + hit.h, tailH, true);
   } else {
-    bits.push(`<p class="muted">This block has no extra controls. Drag to detach. Snap to join.</p>`);
+    setOverlay(el, "tail", 0, 0, false);
   }
-  body.innerHTML = bits.join("");
-  body.querySelector("#inspRet")?.addEventListener("change", (e) => {
-    const v = (e.target as HTMLSelectElement).value;
-    if (isHat(block)) {
-      block.fields.returnType = v;
-      rebuildHat(block);
-    } else if (block.fields.type !== undefined) {
-      block.fields.type = v;
+}
+
+function paintSelection(): void {
+  if (!program) {
+    return;
+  }
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    const mark = selectedBlockId ? marksForScript(script).find((m) => m.block.id === selectedBlockId) : undefined;
+    if (mark) {
+      setOverlay(el, "select", mark.y, mark.h, true);
+    } else {
+      setOverlay(el, "select", 0, 0, false);
     }
-    commit();
-  });
-  body.querySelector("#inspName")?.addEventListener("change", (e) => {
-    const v = (e.target as HTMLInputElement).value;
-    if (isHat(block) || isCall(block)) {
-      block.fields.name = v;
-      if (isHat(block)) {
-        rebuildHat(block);
-      } else {
-        rebuildCall(block);
-      }
-    } else if (block.fields.var !== undefined) {
-      block.fields.var = v;
-    } else if (block.fields.header !== undefined) {
-      block.fields.header = v;
-    }
-    commit();
-  });
-  body.querySelectorAll("select[data-pi]").forEach((el) => {
-    el.addEventListener("change", (e) => {
-      const i = Number((e.target as HTMLSelectElement).dataset.pi);
-      if (block.params?.[i]) {
-        block.params[i].type = (e.target as HTMLSelectElement).value;
-        rebuildHat(block);
-        commit();
-      }
-    });
-  });
-  body.querySelectorAll("input[data-pn]").forEach((el) => {
-    el.addEventListener("change", (e) => {
-      const i = Number((e.target as HTMLInputElement).dataset.pn);
-      if (block.params?.[i]) {
-        block.params[i].name = (e.target as HTMLInputElement).value;
-        rebuildHat(block);
-        commit();
-      }
-    });
-  });
-  body.querySelector("#inspAdd")?.addEventListener("click", () => mutateSelected(1));
-  body.querySelector("#inspDel")?.addEventListener("click", () => mutateSelected(-1));
+  }
 }
 
 function mutateSelected(delta: number): void {
@@ -423,36 +411,91 @@ function mutateSelected(delta: number): void {
   if (!root) {
     return;
   }
-  if (isHat(root)) {
-    root.params = root.params ?? [];
-    if (delta > 0) {
-      const n = root.params.length + 1;
-      const type = window.prompt("Parameter type", root.params.at(-1)?.type || "int");
-      if (type === null) {
-        return;
-      }
-      const name = window.prompt("Parameter name", `arg${n}`);
-      if (name === null) {
-        return;
-      }
-      root.params.push({ type: type.trim() || "int", name: name.trim() || `arg${n}` });
-    } else if (root.params.length) {
-      root.params.pop();
-    }
-    rebuildHat(root);
-    commit();
+  applyMutation({
+    id: root.id,
+    extraArgsCount: isCall(root) ? Math.max(0, (root.extraArgs?.length ?? 0) + delta) : root.extraArgs?.length,
+    params: isHat(root)
+      ? delta > 0
+        ? [...(root.params ?? []), { type: "int", name: `arg${(root.params?.length ?? 0) + 1}` }]
+        : (root.params ?? []).slice(0, -1)
+      : root.params,
+  });
+}
+
+function typeNamed(name: string): Block {
+  const def = CATALOG_BY_OPCODE.get("type.named")!;
+  const block = prototypeFromDef(def);
+  block.fields.name = name || "int";
+  return block;
+}
+
+function applyMutation(m: InspectorMutation): void {
+  if (!program) {
     return;
   }
-  if (isCall(root)) {
-    root.extraArgs = root.extraArgs ?? [];
-    if (delta > 0) {
-      root.extraArgs.push(litEmpty());
-    } else if (root.extraArgs.length) {
-      root.extraArgs.pop();
-    }
-    rebuildCall(root);
-    commit();
+  const block = findInProgram(program, m.id);
+  if (!block) {
+    return;
   }
+  if (m.fields) {
+    Object.assign(block.fields, m.fields);
+  }
+  if (m.params) {
+    block.params = m.params;
+    m.params.forEach((p, i) => {
+      block.fields[`p${i}`] = p.name;
+      const existing = block.values[`t${i}`];
+      if (!existing || isLiteral(existing) || existing.opcode === "type.named" || existing.opcode === "type.custom") {
+        block.values[`t${i}`] = typeNamed(p.type || "int");
+      }
+    });
+    for (const key of Object.keys(block.values)) {
+      const match = /^t(\d+)$/.exec(key);
+      if (match && Number(match[1]) >= m.params.length) {
+        delete block.values[key];
+        delete block.fields[`p${match[1]}`];
+      }
+    }
+  }
+  if (m.slotText) {
+    for (const [slot, text] of Object.entries(m.slotText)) {
+      const cur = block.values[slot];
+      if (cur && !isLiteral(cur) && (cur.opcode === "type.named" || cur.opcode === "type.custom")) {
+        cur.fields.name = text;
+      } else {
+        block.values[slot] = typeNamed(text);
+      }
+      if (slot === "ret") {
+        block.fields.returnType = text;
+      }
+      if (slot === "type") {
+        block.fields.type = text;
+      }
+    }
+  }
+  if (m.extraArgsCount !== undefined) {
+    block.extraArgs = block.extraArgs ?? [];
+    while (block.extraArgs.length < m.extraArgsCount) {
+      block.extraArgs.push(litEmpty());
+    }
+    while (block.extraArgs.length > m.extraArgsCount) {
+      block.extraArgs.pop();
+    }
+  }
+  if (isHat(block)) {
+    rebuildHat(block);
+  }
+  if (isCall(block)) {
+    rebuildCall(block);
+  }
+  if (block.opcode === "control.forRange") {
+    rebuildForRange(block);
+  }
+  if (block.opcode === "ops.lambda" || block.opcode === "ops.lambdaBlock") {
+    rebuildLambda(block);
+  }
+  selectedBlockId = block.id;
+  commit();
 }
 
 function startBlockDrag(event: PointerEvent, scriptId: string): void {
@@ -468,7 +511,8 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
   selectedId = scriptId;
   selectedBlockId = origin.id;
   updateMutator();
-  renderInspector();
+  paintSelection();
+  publishSelection();
 
   let dragScript = script;
   let split = false;
@@ -478,6 +522,7 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
   const py = event.clientY;
   const host = event.currentTarget as HTMLElement;
   host.setPointerCapture(event.pointerId);
+  dragging = true;
 
   const move = (ev: PointerEvent) => {
     const dist = Math.hypot(ev.clientX - px, ev.clientY - py);
@@ -491,13 +536,12 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
       split = true;
       renderScripts();
       updateMutator();
-      renderInspector();
     }
     const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
     if (!el) {
       return;
     }
-    el.classList.add("dragging", "selected");
+    el.classList.add("dragging");
     if (split) {
       const pt = clientToWorld(ev.clientX, ev.clientY);
       dragScript.x = pt.x;
@@ -507,11 +551,11 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
       dragScript.y = startY + (ev.clientY - py) / zoom;
     }
     const snap = snapTarget(dragScript);
-    if (snap) {
+    if (snap && !isReporterish(dragScript.root)) {
+      dragScript.x = snap.x;
       const tEl = world.querySelector(`.script[data-id="${snap.id}"]`) as HTMLElement | null;
       if (tEl) {
-        dragScript.x = snap.x;
-        dragScript.y = snap.y + tEl.offsetHeight - 10;
+        dragScript.y = snap.y + tEl.offsetHeight - 8;
       }
     }
     el.style.left = `${dragScript.x}px`;
@@ -519,14 +563,22 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
     showSnap(dragScript);
     renderGutter();
   };
-  const up = () => {
+  const up = (ev: PointerEvent) => {
     host.removeEventListener("pointermove", move);
     host.removeEventListener("pointerup", up);
+    dragging = false;
     const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
     el?.classList.remove("dragging");
     const target = snapTarget(dragScript);
     hideSnap();
-    if (target) {
+    if (target && isReporterish(dragScript.root)) {
+      if (plugInto(target, dragScript.root, ev)) {
+        program!.sprites[0].scripts = program!.sprites[0].scripts.filter((s) => s.id !== dragScript.id);
+        commit();
+        return;
+      }
+    }
+    if (target && !isReporterish(dragScript.root)) {
       attach(target, dragScript);
     } else if (split) {
       commit();
@@ -539,6 +591,63 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
   host.addEventListener("pointerup", up);
 }
 
+function scriptAt(worldPt: { x: number; y: number }, exclude?: string): Script | undefined {
+  if (!program) {
+    return undefined;
+  }
+  for (const script of program.sprites[0].scripts) {
+    if (script.id === exclude) {
+      continue;
+    }
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    if (!el) {
+      continue;
+    }
+    if (worldPt.x >= script.x && worldPt.x <= script.x + el.offsetWidth && worldPt.y >= script.y && worldPt.y <= script.y + el.offsetHeight) {
+      return script;
+    }
+  }
+  return undefined;
+}
+
+function bestSlot(target: Block, incoming: Block): string | undefined {
+  const keys = Object.keys(target.values);
+  if (incoming.opcode.startsWith("type.")) {
+    const prefer = ["type", "ret", "targ", "inner", "base", "arg", ...keys.filter((k) => /^t\d+$/.test(k))];
+    for (const k of prefer) {
+      if (k in target.values || k === "type" || k === "ret") {
+        if (!(k in target.values)) {
+          return k;
+        }
+        return k;
+      }
+    }
+  }
+  if (incoming.shape === "boolean" && "condition" in target.values) {
+    return "condition";
+  }
+  const empty = keys.find((k) => {
+    const v = target.values[k];
+    return !v || (isLiteral(v) && v.kind === "empty");
+  });
+  return empty ?? keys[0];
+}
+
+function plugInto(host: Script, incoming: Block, ev: PointerEvent): boolean {
+  const worldPt = clientToWorld(ev.clientX, ev.clientY);
+  const hit = hitMark(marksForScript(host), worldPt.y - host.y);
+  const target = hit?.block ?? host.root;
+  const slot = bestSlot(target, incoming);
+  if (!slot) {
+    return false;
+  }
+  target.values[slot] = incoming;
+  if (slot === "ret" && incoming.opcode.startsWith("type.")) {
+    target.fields.returnType = incoming.fields.name || target.fields.returnType;
+  }
+  return true;
+}
+
 function insertBlockAt(proto: Block, x: number, y: number): void {
   if (!program) {
     return;
@@ -548,8 +657,24 @@ function insertBlockAt(proto: Block, x: number, y: number): void {
   }
   const root = cloneBlock(proto);
   const dummy: Script = { id: "drop", x, y, root };
+  const over = scriptAt({ x, y });
+  if (over && isReporterish(root)) {
+    const fake = { clientX: 0, clientY: 0 } as PointerEvent;
+    dummy.x = x;
+    dummy.y = y;
+    const worldPt = { x, y };
+    const hit = hitMark(marksForScript(over), worldPt.y - over.y);
+    const target = hit?.block ?? over.root;
+    const slot = bestSlot(target, root);
+    if (slot) {
+      target.values[slot] = root;
+      commit();
+      return;
+    }
+    void fake;
+  }
   const target = snapTarget(dummy);
-  if (target && root.shape !== "hat") {
+  if (target && root.shape !== "hat" && !isReporterish(root)) {
     lastBlock(target.root).next = root;
     commit();
     return;
@@ -577,7 +702,7 @@ function insertBlock(proto: Block): void {
       return;
     }
   }
-  if (root.shape !== "hat" && selectedId) {
+  if (root.shape !== "hat" && !isReporterish(root) && selectedId) {
     const selected = findScript(selectedId);
     if (selected && lastBlock(selected.root).shape !== "cap") {
       lastBlock(selected.root).next = root;
@@ -609,7 +734,7 @@ function attach(target: Script, dragged: Script): void {
   if (!program || target.id === dragged.id) {
     return;
   }
-  if (dragged.root.shape === "hat") {
+  if (dragged.root.shape === "hat" || isReporterish(dragged.root)) {
     return;
   }
   const last = lastBlock(target.root);
@@ -627,6 +752,10 @@ function snapTarget(moving: Script): Script | undefined {
   }
   const movingEl = world.querySelector(`.script[data-id="${moving.id}"]`) as HTMLElement | null;
   const mw = movingEl?.offsetWidth ?? 120;
+  if (isReporterish(moving.root)) {
+    const over = scriptAt({ x: moving.x + 10, y: moving.y + 10 }, moving.id);
+    return over;
+  }
   for (const other of program.sprites[0].scripts) {
     if (other.id === moving.id) {
       continue;
@@ -639,7 +768,7 @@ function snapTarget(moving: Script): Script | undefined {
     if (!el) {
       continue;
     }
-    const bottomX = other.x + 16;
+    const bottomX = other.x;
     const bottomY = other.y + el.offsetHeight - 4;
     if (Math.hypot(moving.x - bottomX, moving.y - bottomY) < SNAP && moving.x < other.x + Math.max(el.offsetWidth, mw)) {
       return other;
@@ -651,7 +780,7 @@ function snapTarget(moving: Script): Script | undefined {
 function showSnap(moving: Script): void {
   const notch = document.getElementById("snapNotch") as SVGSVGElement | null;
   const target = snapTarget(moving);
-  if (!target || !notch) {
+  if (!target || !notch || isReporterish(moving.root)) {
     hideSnap();
     return;
   }
@@ -660,7 +789,7 @@ function showSnap(moving: Script): void {
     hideSnap();
     return;
   }
-  const w = Math.max(80, el.offsetWidth * 0.85);
+  const w = Math.max(80, el.offsetWidth * 0.9);
   const x = panX + target.x * zoom;
   const y = panY + (target.y + el.offsetHeight - 6) * zoom;
   notch.setAttribute("width", String(w));
@@ -689,11 +818,11 @@ function editScript(scriptId: string): void {
       return;
     }
     field.block.fields[field.key] = next;
-    if (field.key === "returnType" || field.key === "name" || field.block.params) {
+    if (field.block.opcode === "events.flag" || field.block.opcode === "custom.define") {
       rebuildHat(field.block);
     }
-    if (field.key === "type" && field.block.opcode === "data.set") {
-      field.block.line = `[${next} v] ${field.block.fields.var ?? "x"} = {value} :: variables`;
+    if (isCall(field.block)) {
+      rebuildCall(field.block);
     }
     commit();
     return;
@@ -718,7 +847,7 @@ function editScript(scriptId: string): void {
 }
 
 function firstEditableField(block: Block): { block: Block; key: string } | undefined {
-  const keys = ["returnType", "type", "header", "var", "name", "msg", "label", "what"];
+  const keys = ["name", "var", "field", "header", "label"];
   let current: Block | undefined = block;
   while (current) {
     for (const key of keys) {
@@ -756,6 +885,7 @@ function commit(): void {
   }
   recomputeStats(program);
   renderAll();
+  publishSelection();
   post({ type: "programChanged", program });
 }
 
@@ -811,3 +941,4 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 void renderBlockSvg;
+void findBlock;

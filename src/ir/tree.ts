@@ -1,13 +1,37 @@
-import type { Block } from "./types";
+import { isLiteral } from "./builders";
+import type { Block, Literal, Program } from "./types";
 
 export function forEachBlock(root: Block | undefined, fn: (b: Block) => void): void {
-  let current = root;
-  while (current) {
-    fn(current);
-    for (const child of Object.values(current.branches)) {
-      forEachBlock(child, fn);
+  if (!root) {
+    return;
+  }
+  const stack: Block[] = [root];
+  const seen = new Set<string>();
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (seen.has(current.id)) {
+      continue;
     }
-    current = current.next;
+    seen.add(current.id);
+    fn(current);
+    if (current.next) {
+      stack.push(current.next);
+    }
+    for (const value of Object.values(current.values)) {
+      if (value && !isLiteral(value)) {
+        stack.push(value);
+      }
+    }
+    for (const extra of current.extraArgs ?? []) {
+      if (extra && !isLiteral(extra)) {
+        stack.push(extra);
+      }
+    }
+    for (const branch of Object.values(current.branches)) {
+      if (branch) {
+        stack.push(branch);
+      }
+    }
   }
 }
 
@@ -19,6 +43,21 @@ export function findBlock(root: Block | undefined, id: string): Block | undefine
     }
   });
   return found;
+}
+
+export function findInProgram(program: Program | undefined, id: string): Block | undefined {
+  if (!program) {
+    return undefined;
+  }
+  for (const sprite of program.sprites) {
+    for (const script of sprite.scripts) {
+      const found = findBlock(script.root, id);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Unlink `target` from its parent. `target.next` (the tail) stays on target. */
@@ -45,4 +84,26 @@ export function unlink(root: Block, target: Block): boolean {
     current = current.next;
   }
   return false;
+}
+
+export function isTypeBlock(block: Block): boolean {
+  return block.opcode.startsWith("type.");
+}
+
+export function slotEntries(block: Block): Array<[string, Block | Literal]> {
+  return Object.entries(block.values);
+}
+
+export function typeSlotNames(block: Block): string[] {
+  const names = Object.keys(block.values).filter((k) => {
+    const v = block.values[k];
+    if (!v) {
+      return k === "type" || k === "ret" || k === "inner" || k === "base" || k === "arg" || k === "targ" || /^t\d+$/.test(k);
+    }
+    if (isLiteral(v)) {
+      return k === "type" || k === "ret" || k === "inner" || k === "base" || k === "arg" || k === "targ" || /^t\d+$/.test(k);
+    }
+    return isTypeBlock(v) || k === "type" || k === "ret" || /^t\d+$/.test(k);
+  });
+  return names;
 }

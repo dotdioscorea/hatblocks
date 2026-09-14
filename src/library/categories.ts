@@ -16,8 +16,8 @@ export const CATEGORIES: CategoryMeta[] = [
   { id: "lists", label: "Arr", color: "#FF661A" },
   { id: "sensing", label: "Ptr", color: "#5CB1D6" },
   { id: "looks", label: "I/O", color: "#9966FF" },
+  { id: "motion", label: "Type", color: "#4C97FF" },
   { id: "events", label: "Events", color: "#FFBF00" },
-  { id: "motion", label: "Motion", color: "#4C97FF" },
   { id: "sound", label: "Sound", color: "#CF63CF" },
 ];
 

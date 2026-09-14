@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import type { Block, Program } from "./ir/types";
 import { defaultToolbox } from "./library/catalog";
-import type { HostToEditor, HostToToolbox } from "./protocol";
+import type { HostToEditor, HostToInspector, HostToToolbox, InspectorMutation, InspectorState } from "./protocol";
 
 export interface EditorSession {
   readonly uri: vscode.Uri;
@@ -12,7 +12,9 @@ export interface EditorSession {
 export class HatblocksHub {
   private readonly editors = new Map<string, EditorSession>();
   private toolbox: vscode.Webview | undefined;
+  private inspector: vscode.Webview | undefined;
   private dragPayload: Block | undefined;
+  private selection: InspectorState = { language: "c", block: null };
 
   registerEditor(session: EditorSession): vscode.Disposable {
     this.editors.set(session.uri.toString(), session);
@@ -26,6 +28,13 @@ export class HatblocksHub {
 
   setToolbox(webview: vscode.Webview | undefined): void {
     this.toolbox = webview;
+  }
+
+  setInspector(webview: vscode.Webview | undefined): void {
+    this.inspector = webview;
+    if (webview) {
+      this.refreshInspector();
+    }
   }
 
   activeEditor(): EditorSession | undefined {
@@ -78,5 +87,19 @@ export class HatblocksHub {
         stats: { scripts: 0, blocks: 0, truncated: false },
       } satisfies Program);
     this.postToolbox({ type: "setToolbox", program: payload, blocksMode, fileName });
+  }
+
+  setSelection(state: InspectorState): void {
+    this.selection = state;
+    this.refreshInspector();
+  }
+
+  refreshInspector(): void {
+    const msg: HostToInspector = { type: "setSelection", state: this.selection };
+    void this.inspector?.postMessage(msg);
+  }
+
+  applyMutation(mutation: InspectorMutation): void {
+    this.activeEditor()?.post({ type: "applyMutation", mutation });
   }
 }

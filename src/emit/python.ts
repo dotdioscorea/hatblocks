@@ -69,6 +69,14 @@ function emitStmt(block: Block, indent: number): string[] {
       return [`${p}input(${expr(block.values.prompt)})`];
     case "data.set":
       return [`${p}${block.fields.var || "x"} = ${expr(block.values.value)}`];
+    case "data.assign":
+      return [`${p}${expr(block.values.lhs)} = ${expr(block.values.rhs)}`];
+    case "data.declareInit":
+      return [`${p}${block.fields.name || "x"}: ${expr(block.values.type)} = ${expr(block.values.value)}`];
+    case "custom.method": {
+      const args = (block.extraArgs ?? []).map((a) => expr(a)).join(", ");
+      return [`${p}${expr(block.values.obj)}.${block.fields.name || "m"}(${args})`];
+    }
     case "control.if":
       return [`${p}if ${expr(block.values.condition)}:`, ...orPass(block.branches.body, indent + 1)];
     case "control.ifElse":
@@ -170,7 +178,21 @@ function expr(value: Block | Literal | undefined): string {
     case "py.none":
       return "None";
     case "py.attr":
+    case "sensing.field":
       return `${expr(value.values.value)}.${value.fields.field || "x"}`;
+    case "custom.method": {
+      const args = (value.extraArgs ?? []).map((a) => expr(a)).join(", ");
+      return `${expr(value.values.obj)}.${value.fields.name || "m"}(${args})`;
+    }
+    case "ops.lambda":
+      return `lambda ${value.fields.p0 || "x"}: ${expr(value.values.body)}`;
+    case "type.named":
+    case "type.custom":
+      return value.fields.name || "Any";
+    case "type.tmpl":
+      return `${expr(value.values.base)}[${expr(value.values.arg)}]`;
+    case "data.assign":
+      return `${expr(value.values.lhs)} = ${expr(value.values.rhs)}`;
     case "sensing.subscript":
       return `${expr(value.values.array)}[${expr(value.values.index)}]`;
     case "custom.reporter": {

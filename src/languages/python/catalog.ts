@@ -18,12 +18,15 @@ export interface OpcodeDef {
 export const PY_CATALOG: OpcodeDef[] = [
   { opcode: "py.import", shape: "stack", category: "extension", line: "import [{module} v]", fields: { module: "sys" } },
   { opcode: "py.importFrom", shape: "stack", category: "extension", line: "from [{module} v] import [{name} v]", fields: { module: "os", name: "path" } },
-  { opcode: "custom.define", shape: "hat", category: "custom", line: "[None v] fn :: custom hat", fields: { name: "fn", returnType: "None" } },
-  { opcode: "py.class", shape: "hat", category: "custom", line: "class [{name} v] : :: custom hat", fields: { name: "C" } },
+  { opcode: "custom.define", shape: "hat", category: "custom", line: "{ret} fn :: custom hat", fields: { name: "fn", returnType: "None" }, valueSlots: ["ret"] },
+  { opcode: "py.class", shape: "hat", category: "custom", line: "class {name} : :: custom hat", fields: { name: "C" } },
+  { opcode: "type.named", shape: "reporter", category: "motion", line: "{name} :: motion", fields: { name: "int" } },
+  { opcode: "type.custom", shape: "reporter", category: "motion", line: "{name} :: motion", fields: { name: "T" } },
+  { opcode: "type.tmpl", shape: "reporter", category: "motion", line: "{base} [ {arg} ] :: motion", valueSlots: ["base", "arg"] },
   { opcode: "control.if", shape: "c", category: "control", line: "if {condition} then", valueSlots: ["condition"], branchSlots: ["body"] },
   { opcode: "control.ifElse", shape: "c2", category: "control", line: "if {condition} then", valueSlots: ["condition"], branchSlots: ["body", "else"] },
   { opcode: "control.while", shape: "c", category: "control", line: "while {condition} {", valueSlots: ["condition"], branchSlots: ["body"], closer: "} :: control" },
-  { opcode: "py.for", shape: "c", category: "control", line: "for [{var} v] in {iter} {", fields: { var: "x" }, valueSlots: ["iter"], branchSlots: ["body"], closer: "} :: control" },
+  { opcode: "py.for", shape: "c", category: "control", line: "for {var} in {iter} {", fields: { var: "x" }, valueSlots: ["iter"], branchSlots: ["body"], closer: "} :: control" },
   { opcode: "py.with", shape: "c", category: "control", line: "with {ctx} {", valueSlots: ["ctx"], branchSlots: ["body"], closer: "} :: control" },
   { opcode: "py.try", shape: "c2", category: "control", line: "try {", branchSlots: ["body", "else"], closer: "} :: control" },
   { opcode: "control.break", shape: "stack", category: "control", line: "break" },
@@ -44,12 +47,23 @@ export const PY_CATALOG: OpcodeDef[] = [
   { opcode: "ops.or", shape: "boolean", category: "operators", line: "{left} or {right}", valueSlots: ["left", "right"] },
   { opcode: "ops.not", shape: "boolean", category: "operators", line: "not {inner}", valueSlots: ["inner"] },
   { opcode: "ops.in", shape: "boolean", category: "operators", line: "{left} in {right} :: operators", valueSlots: ["left", "right"] },
-  { opcode: "data.set", shape: "stack", category: "variables", line: "{var} = {value} :: variables", fields: { var: "x" }, valueSlots: ["value"] },
+  { opcode: "data.assign", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables", valueSlots: ["lhs", "rhs"] },
+  { opcode: "data.set", shape: "stack", category: "variables", line: "{lhs} = {rhs} :: variables", valueSlots: ["lhs", "rhs"], hidden: true },
+  { opcode: "data.declareInit", shape: "stack", category: "variables", line: "{type} {name} = {value} :: variables", fields: { name: "x" }, valueSlots: ["type", "value"] },
   { opcode: "data.get", shape: "reporter", category: "variables", line: "{var}", fields: { var: "x" } },
   { opcode: "custom.call", shape: "stack", category: "custom", line: "{name} :: custom", fields: { name: "fn" } },
   { opcode: "custom.reporter", shape: "reporter", category: "custom", line: "{name} :: custom", fields: { name: "fn" } },
-  { opcode: "looks.say", shape: "stack", category: "looks", line: "print {message} :: looks", valueSlots: ["message"] },
-  { opcode: "looks.ask", shape: "stack", category: "looks", line: "input {prompt} :: looks", valueSlots: ["prompt"] },
+  { opcode: "custom.method", shape: "stack", category: "custom", line: "{obj} . {name} :: custom", fields: { name: "m" }, valueSlots: ["obj"] },
+  { opcode: "looks.say", shape: "stack", category: "looks", line: "print :: custom", fields: { name: "print" }, hidden: true },
+  { opcode: "looks.ask", shape: "stack", category: "looks", line: "input :: custom", fields: { name: "input" }, hidden: true },
+  {
+    opcode: "ops.lambda",
+    shape: "reporter",
+    category: "operators",
+    line: "lambda {p0} : {body} :: operators",
+    fields: { p0: "x" },
+    valueSlots: ["body"],
+  },
   { opcode: "py.none", shape: "reporter", category: "sensing", line: "None :: sensing" },
   { opcode: "py.attr", shape: "reporter", category: "sensing", line: "{value} . {field} :: sensing", valueSlots: ["value"], fields: { field: "x" } },
   { opcode: "sensing.subscript", shape: "reporter", category: "lists", line: "{array} [{index}] :: sensing", valueSlots: ["array", "index"] },
@@ -83,7 +97,11 @@ export function pyPrototype(opcode: string, id: IdFactory, extra?: Partial<Block
 }
 
 export function pythonToolbox(id: IdFactory = createIdFactory("py")): ReturnType<typeof grouped> {
-  return grouped(PY_CATALOG.filter((d) => !d.hidden).map((d) => pyPrototype(d.opcode, id)));
+  const blocks = PY_CATALOG.filter((d) => !d.hidden).map((d) => pyPrototype(d.opcode, id));
+  for (const name of ["int", "str", "float", "bool", "None", "Any", "list", "dict"]) {
+    blocks.push(pyPrototype("type.named", id, { fields: { name } }));
+  }
+  return grouped(blocks);
 }
 
 function grouped(blocks: Block[]) {

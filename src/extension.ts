@@ -4,6 +4,7 @@ import { HatblocksHub } from "./hub";
 import { blocksModeEnabled, convertOpenTabs, setBlocksMode, syncEditorAssociations, toggleBlocksMode } from "./mode";
 import { runCDocument } from "./run";
 import { HatblocksToolboxProvider } from "./toolboxView";
+import { HatblocksInspectorProvider } from "./inspectorView";
 
 export function activate(context: vscode.ExtensionContext): void {
   const hub = new HatblocksHub();
@@ -36,6 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
     status,
     HatblocksEditorProvider.register(context, hub),
     vscode.window.registerWebviewViewProvider("hatblocks.toolbox", new HatblocksToolboxProvider(context, hub)),
+    vscode.window.registerWebviewViewProvider("hatblocks.inspector", new HatblocksInspectorProvider(context, hub)),
     vscode.commands.registerCommand("hatblocks.toggleMode", async () => {
       const on = await toggleBlocksMode();
       refreshStatus();

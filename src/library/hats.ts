@@ -1,4 +1,4 @@
-/** Rounded-top hats (Scratch flag/define *shape*) with language-native labels. */
+/** Rounded-top hats (Scratch flag *shape*) with language-native labels. */
 
 export interface FnParam {
   type: string;
@@ -10,30 +10,28 @@ export const C_TYPES = [
   "int",
   "char",
   "char*",
-  "const char*",
-  "int*",
   "float",
   "double",
-  "size_t",
   "bool",
+  "size_t",
+  "auto",
   "long",
-  "unsigned",
 ];
 
-export const CPP_TYPES = [...C_TYPES, "auto", "string", "vector", "unique_ptr", "T"];
-
-export const PY_TYPES = ["", "None", "int", "str", "float", "bool", "list", "dict", "Any"];
+export const PY_TYPES = ["None", "int", "str", "float", "bool", "list", "dict", "Any"];
 
 export function hatLine(
   kind: "when" | "define",
-  returnType: string,
+  _returnType: string,
   name: string,
   params: FnParam[] = [],
+  parentClass?: string,
 ): string {
-  const ret = `[${cleanType(returnType)} v]`;
-  const args = params.map((p) => `[${cleanType(p.type)} v] ${cleanIdent(p.name)}`).join(" , ");
-  const sig = args ? `${ret} ${cleanIdent(name)} ( ${args} )` : `${ret} ${cleanIdent(name)}`;
-  // scratchblocks: `:: events hat` is the rounded-top flag shape, without "when/clicked".
+  const ident = parentClass
+    ? `${cleanIdent(parentClass)} : : ${cleanIdent(name)}`
+    : cleanIdent(name);
+  const args = params.map((_, i) => `{t${i}} {p${i}}`).join(" , ");
+  const sig = args ? `{ret} ${ident} ( ${args} )` : `{ret} ${ident}`;
   const shape = kind === "when" ? "events hat" : "custom hat";
   return `${sig} :: ${shape}`;
 }
@@ -55,10 +53,55 @@ export function rebuildHat(block: {
   const name = block.fields.name || (block.opcode === "events.flag" ? "main" : "fn");
   const ret = block.fields.returnType || "int";
   const kind = block.opcode === "events.flag" ? "when" : "define";
-  block.line = hatLine(kind, ret, name, block.params ?? []);
+  block.line = hatLine(kind, ret, name, block.params ?? [], block.fields.parentClass);
+  block.fields.returnType = ret;
+  block.fields.name = name;
+  (block.params ?? []).forEach((p, i) => {
+    block.fields[`p${i}`] = p.name;
+  });
 }
 
-export function rebuildCall(block: { fields: Record<string, string>; line: string; extraArgs?: unknown[] }): void {
-  const name = block.fields.name || "fn";
-  block.line = `${name} :: custom`;
+export function rebuildCall(block: {
+  opcode: string;
+  fields: Record<string, string>;
+  line: string;
+}): void {
+  const name = (block.fields.name || "f").trim() || "f";
+  block.fields.name = name;
+  if (block.opcode === "custom.method") {
+    block.line = `{obj} . ${name} :: custom`;
+  } else {
+    block.line = `${name} :: custom`;
+  }
+}
+
+export function rebuildForRange(block: {
+  fields: Record<string, string>;
+  line: string;
+}): void {
+  const name = (block.fields.var || "x").trim() || "x";
+  block.fields.var = name;
+  block.line = "for {type} {var} : {range} {";
+}
+
+export function rebuildLambda(block: {
+  opcode: string;
+  fields: Record<string, string>;
+  params?: FnParam[];
+  line: string;
+  closer?: string;
+}): void {
+  const params = block.params ?? [];
+  const args = params.length
+    ? params.map((_, i) => `{t${i}} {p${i}}`).join(" , ")
+    : "{t0} {p0}";
+  params.forEach((p, i) => {
+    block.fields[`p${i}`] = p.name;
+  });
+  if (block.opcode === "ops.lambdaBlock") {
+    block.line = `[ ] ( ${args} ) {`;
+    block.closer = "} :: operators";
+  } else {
+    block.line = `[ ] ( ${args} ) { {body} } :: operators`;
+  }
 }

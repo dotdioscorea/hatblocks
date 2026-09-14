@@ -28,6 +28,7 @@ const webviewBuild = {
   entryPoints: {
     editor: "src/webview/editor.ts",
     toolbox: "src/webview/toolbox.ts",
+    inspector: "src/webview/inspector.ts",
   },
   outdir: "dist",
   platform: "browser",

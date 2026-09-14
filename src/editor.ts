@@ -85,6 +85,15 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
             break;
           case "reveal":
             break;
+          case "select":
+            this.hub.setSelection({ language: msg.language, fileName: msg.fileName, block: msg.block });
+            break;
+          case "undo":
+            await vscode.commands.executeCommand("undo");
+            break;
+          case "redo":
+            await vscode.commands.executeCommand("redo");
+            break;
         }
       }),
       vscode.workspace.onDidChangeTextDocument((event) => {

@@ -123,6 +123,11 @@
           "type": "webview",
           "id": "hatblocks.toolbox",
           "name": "Blocks"
+        },
+        {
+          "type": "webview",
+          "id": "hatblocks.inspector",
+          "name": "Inspector"
         }
       ]
     },

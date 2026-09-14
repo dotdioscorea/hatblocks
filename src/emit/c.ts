@@ -40,8 +40,8 @@ export function emitC(program: Program): string {
     for (const script of sprite.scripts) {
       const hat = script.root;
       if (hat.opcode === "events.flag") {
-        const ret = hat.fields.returnType || "int";
-        const plist = (hat.params ?? []).map((p) => `${p.type} ${p.name}`).join(", ");
+        const ret = typeExpr(hat.values.ret, needed) || hat.fields.returnType || "int";
+        const plist = paramListOf(hat, needed);
         mainFn = emitFunction(hat.fields.name || "main", hat.params?.map((p) => p.name) ?? [], hat.next, {
           needed,
           isMain: true,
@@ -94,10 +94,12 @@ function harvestTopLevel(
       into.includes.push(includeLine(header));
     } else if (current.opcode === "c.defineMacro") {
       into.macros.push(`#define ${sanitizeIdent(current.fields.name || "N")} ${expr(current.values.value, into.needed)}`);
-    } else if (current.opcode === "data.set" || current.opcode === "data.declare") {
-      const name = sanitizeIdent(current.fields.var || "x");
-      const type = cTypeFromComment(current.comment) ?? guessType(name);
-      const value = current.values.value;
+    } else if (current.opcode === "data.declare" || current.opcode === "data.declareInit") {
+      into.globals.push(emitDeclare(current, into.needed, ""));
+    } else if (current.opcode === "data.set" || current.opcode === "data.assign") {
+      const name = sanitizeIdent(current.fields.var || current.fields.name || "x");
+      const type = typeExpr(current.values.type, into.needed) || cTypeFromComment(current.comment) || guessType(name);
+      const value = current.values.value ?? current.values.rhs;
       if (value && !(isLiteral(value) && value.kind === "empty")) {
         into.globals.push(`${type} ${name} = ${expr(value, into.needed)};`);
       } else {
@@ -110,17 +112,31 @@ function harvestTopLevel(
 
 function emitDefined(hat: Block, needed: Set<string>): string {
   const parsed = parseDefine(hat);
-  const returnType = hat.fields.returnType || (chainHas(hat.next, "control.report") ? "int" : "void");
-  const paramList =
-    hat.params && hat.params.length
-      ? hat.params.map((p) => `${p.type} ${p.name}`).join(", ")
-      : parsed.params.map((p) => `${guessType(p)} ${p}`).join(", ");
-  return emitFunction(hat.fields.name || parsed.name, hat.params?.map((p) => p.name) ?? parsed.params, hat.next, {
+  const returnType = typeExpr(hat.values.ret, needed) || hat.fields.returnType || (chainHas(hat.next, "control.report") ? "int" : "void");
+  const plist = paramListOf(hat, needed) || parsed.params.map((p) => `${guessType(p)} ${p}`).join(", ");
+  const name = hat.fields.name || parsed.name;
+  const qual = hat.fields.parentClass ? `${sanitizeIdent(hat.fields.parentClass)}::${sanitizeIdent(name)}` : name;
+  return emitFunction(qual, hat.params?.map((p) => p.name) ?? parsed.params, hat.next, {
     needed,
     isMain: false,
     returnType,
-    paramList: paramList || "void",
+    paramList: plist || "void",
   });
+}
+
+function paramListOf(hat: Block, needed: Set<string>): string {
+  const params = hat.params ?? [];
+  if (!params.length) {
+    return "";
+  }
+  return params
+    .map((p, i) => {
+      const t = hat.values[`t${i}`];
+      const ty = t ? typeExpr(t, needed) : p.type || "int";
+      const name = hat.fields[`p${i}`] || p.name;
+      return `${ty} ${name}`.trim();
+    })
+    .join(", ");
 }
 
 function parseDefine(hat: Block): { name: string; params: string[] } {
@@ -149,21 +165,10 @@ function emitFunction(
   return `${signature} {\n${inner || "  /* empty */"}\n}`;
 }
 
-function collectDecls(head: Block | undefined, out: Set<string>, params: Set<string>): void {
-  let current = head;
-  while (current) {
-    if (current.opcode === "data.set") {
-      const name = sanitizeIdent(current.fields.var || "x");
-      if (!params.has(name) && !name.includes("[")) {
-        const type = cTypeFromComment(current.comment) ?? guessType(name);
-        out.add(`${type} ${name};`);
-      }
-    }
-    for (const branch of Object.values(current.branches)) {
-      collectDecls(branch, out, params);
-    }
-    current = current.next;
-  }
+function collectDecls(head: Block | undefined, _out: Set<string>, _params: Set<string>): void {
+  void head;
+  void _out;
+  void _params;
 }
 
 function emitChain(head: Block | undefined, needed: Set<string>, isMain: boolean, indent: number): string[] {
@@ -188,7 +193,7 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
   switch (block.opcode) {
     case "cpp.class":
       return [
-        `${pad}class ${block.fields.name || "T"} {`,
+        `${pad}${block.fields.kind === "struct" ? "struct" : "class"} ${block.fields.name || "T"} {`,
         `${pad}public:`,
         ...emitChain(block.branches.body, needed, isMain, indent + 1),
         `${pad}};`,
@@ -213,17 +218,14 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
     case "looks.ask":
       needed.add("stdio.h");
       return [`${pad}printf("%s", ${expr(block.values.prompt, needed)});`, `${pad}fflush(stdout);`];
-    case "data.set": {
-      const name = block.fields.var || "x";
-      if (name.includes("[")) {
-        return [`${pad}${name} = ${expr(block.values.value, needed)};`];
-      }
-      return [`${pad}${sanitizeIdent(name)} = ${expr(block.values.value, needed)};`];
-    }
+    case "data.set":
+    case "data.assign":
+      return [`${pad}${lhsOf(block, needed)} = ${expr(block.values.rhs ?? block.values.value, needed)};`];
     case "data.change":
-      return [`${pad}${sanitizeIdent(block.fields.var || "x")} += ${expr(block.values.value, needed)};`];
+      return [`${pad}${lhsOf(block, needed)} += ${expr(block.values.rhs ?? block.values.value, needed)};`];
     case "data.declare":
-      return [`${pad}/* declare ${block.fields.var || "x"} */`];
+    case "data.declareInit":
+      return [`${pad}${emitDeclare(block, needed, "")}`];
     case "data.replaceItem":
       return [`${pad}${expr(block.values.array, needed)}[${expr(block.values.index, needed)}] = ${expr(block.values.value, needed)};`];
     case "sensing.free":
@@ -265,6 +267,13 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
         ...emitChain(block.branches.body, needed, isMain, indent + 1),
         `${pad}}`,
       ];
+    case "control.forRange":
+    case "cpp.forRange":
+      return [
+        `${pad}for (${typeExpr(block.values.type, needed) || "auto"} ${block.fields.var || "x"} : ${expr(block.values.range, needed)}) {`,
+        ...emitChain(block.branches.body, needed, isMain, indent + 1),
+        `${pad}}`,
+      ];
     case "control.switch":
       return [
         `${pad}switch (${expr(block.values.value, needed)}) {`,
@@ -287,11 +296,31 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
       return [`${pad}sleep(${expr(block.values.secs, needed)});`];
     case "control.goto":
       return [`${pad}goto ${sanitizeIdent(block.fields.label || "label")};`];
-    case "custom.call": {
-      const name = sanitizeIdent(block.fields.name || "fn");
+    case "custom.call":
+    case "custom.tmplCall": {
       const args = (block.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
-      return [`${pad}${name}(${args});`];
+      return [`${pad}${callName(block, needed)}(${args});`];
     }
+    case "custom.method": {
+      const args = (block.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
+      return [`${pad}${expr(block.values.obj, needed)}.${block.fields.name || "m"}(${args});`];
+    }
+    case "cpp.delete":
+      return [`${pad}delete ${expr(block.values.value, needed)};`];
+    case "cpp.using":
+      return [`${pad}using ${block.fields.name || "namespace std"};`];
+    case "cpp.namespace":
+      return [
+        `${pad}namespace ${block.fields.name || "ns"} {`,
+        ...emitChain(block.branches.body, needed, isMain, indent + 1),
+        `${pad}}`,
+      ];
+    case "ops.lambdaBlock":
+      return [
+        `${pad}${lambdaHead(block, needed)} {`,
+        ...emitChain(block.branches.body, needed, isMain, indent + 1),
+        `${pad}}`,
+      ];
     case "c.eval":
       return [`${pad}${expr(block.values.value, needed)};`];
     case "c.unknown":
@@ -388,7 +417,34 @@ function expr(value: Block | Literal | undefined, needed: Set<string>): string {
     case "ops.ternary":
       return `(${expr(value.values.condition, needed)} ? ${expr(value.values.then, needed)} : ${expr(value.values.else, needed)})`;
     case "ops.cast":
-      return `((${value.fields.type || "int"}) ${expr(value.values.value, needed)})`;
+      return `((${typeExpr(value.values.type, needed) || value.fields.type || "int"}) ${expr(value.values.value, needed)})`;
+    case "ops.scope":
+    case "type.scope":
+      return `${typeExpr(value.values.left, needed) || expr(value.values.left, needed)}::${typeExpr(value.values.right, needed) || expr(value.values.right, needed)}`;
+    case "type.named":
+    case "type.custom":
+      return value.fields.name || "int";
+    case "type.ptr":
+      return `${typeExpr(value.values.inner, needed)}*`;
+    case "type.ref":
+      return `${typeExpr(value.values.inner, needed)}&`;
+    case "type.tmpl":
+      return typeExpr(value, needed);
+    case "ops.lambda":
+      return `${lambdaHead(value, needed)} { return ${expr(value.values.body, needed)}; }`;
+    case "cpp.new": {
+      const args = (value.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
+      const t = typeExpr(value.values.type, needed) || "T";
+      return args ? `new ${t}(${args})` : `new ${t}`;
+    }
+    case "custom.method": {
+      const args = (value.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
+      return `${expr(value.values.obj, needed)}.${value.fields.name || "m"}(${args})`;
+    }
+    case "custom.tmplCall": {
+      const args = (value.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
+      return `${callName(value, needed)}(${args})`;
+    }
     case "ops.join":
       needed.add("stdio.h");
       return expr(value.values.left, needed);
@@ -410,14 +466,88 @@ function expr(value: Block | Literal | undefined, needed: Set<string>): string {
     case "sensing.answer":
       return "0";
     case "custom.reporter": {
-      const name = sanitizeIdent(value.fields.name || "fn");
       const args = (value.extraArgs ?? []).map((a) => expr(a, needed)).join(", ");
+      const name = value.fields.name || "fn";
+      if (!name) {
+        return `{${args}}`;
+      }
       return `${name}(${args})`;
     }
     case "c.unknownReporter":
       return value.fields.text || "0";
     default:
       return "0";
+  }
+}
+
+function lhsOf(block: Block, needed: Set<string>): string {
+  if (block.values.lhs) {
+    return expr(block.values.lhs, needed);
+  }
+  return sanitizeIdent(block.fields.var || block.fields.name || "x");
+}
+
+function emitDeclare(block: Block, needed: Set<string>, pad: string): string {
+  const ty = typeExpr(block.values.type, needed) || "int";
+  const name = block.fields.name || block.fields.var || "x";
+  const value = block.values.value;
+  if (block.opcode === "data.declareInit" && value && !(isLiteral(value) && value.kind === "empty")) {
+    return `${pad}${ty} ${name} = ${expr(value, needed)};`;
+  }
+  return `${pad}${ty} ${name};`;
+}
+
+function callName(block: Block, needed: Set<string>): string {
+  const name = block.fields.name || "fn";
+  if (block.opcode === "custom.tmplCall") {
+    return `${name}<${typeExpr(block.values.targ, needed) || "T"}>`;
+  }
+  return name;
+}
+
+function lambdaHead(block: Block, needed: Set<string>): string {
+  const params = block.params?.length
+    ? block.params
+        .map((p, i) => {
+          const t = block.values[`t${i}`];
+          const ty = t ? typeExpr(t, needed) : p.type || "auto";
+          return `${ty} ${block.fields[`p${i}`] || p.name}`;
+        })
+        .join(", ")
+    : `${typeExpr(block.values.t0, needed) || "auto"} ${block.fields.p0 || "x"}`;
+  return `[=](${params})`;
+}
+
+function typeExpr(value: Block | Literal | undefined, needed: Set<string>): string {
+  if (!value) {
+    return "";
+  }
+  if (isLiteral(value)) {
+    if (value.kind === "empty") {
+      return "";
+    }
+    return value.value;
+  }
+  switch (value.opcode) {
+    case "type.named":
+    case "type.custom":
+      return value.fields.name || "int";
+    case "type.ptr":
+      return `${typeExpr(value.values.inner, needed) || "void"}*`;
+    case "type.ref":
+      return `${typeExpr(value.values.inner, needed) || "int"}&`;
+    case "type.tmpl": {
+      const extras = (value.extraArgs ?? []).map((a) => typeExpr(a as Block, needed) || expr(a, needed));
+      const args = [typeExpr(value.values.arg, needed) || expr(value.values.arg, needed), ...extras].filter(Boolean).join(", ");
+      return `${typeExpr(value.values.base, needed) || expr(value.values.base, needed)}<${args}>`;
+    }
+    case "type.scope":
+    case "ops.scope":
+      return `${typeExpr(value.values.left, needed) || expr(value.values.left, needed)}::${typeExpr(value.values.right, needed) || expr(value.values.right, needed)}`;
+    case "data.get":
+      return value.fields.var || "T";
+    default:
+      return expr(value, needed);
   }
 }
 

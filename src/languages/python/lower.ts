@@ -161,7 +161,10 @@ class PyLowerer {
       case "try_statement": {
         const body = node.childForFieldName("body");
         const except = named(node).find((n) => n.type === "except_clause");
-        const exceptBody = except ? this.lowerBlock(except.childForFieldName("body") ?? except) : undefined;
+        const exceptBlock = except
+          ? named(except).find((n) => n.type === "block") ?? except.childForFieldName("body")
+          : undefined;
+        const exceptBody = exceptBlock ? this.lowerBlock(exceptBlock) : undefined;
         return pyPrototype("py.try", this.id, {
           branches: { body: this.lowerBlock(body), else: exceptBody },
           source: spanOf(node),
@@ -217,8 +220,17 @@ class PyLowerer {
     hat.fields.returnType = ret || "None";
     hat.params = params;
     hat.line = hatLine("define", ret || "None", name, params);
+    hat.values.ret = pyPrototype("type.named", this.id, { fields: { name: ret || "None" } });
+    params.forEach((p, i) => {
+      hat.values[`t${i}`] = pyPrototype("type.named", this.id, { fields: { name: p.type || "Any" } });
+      hat.fields[`p${i}`] = p.name;
+    });
     hat.next = body;
     return hat;
+  }
+
+  private lowerClass(node: Node): Block {
+    return this.lowerClassScripts(node)[0]?.root ?? pyPrototype("py.class", this.id, { fields: { name: "C" }, source: spanOf(node) });
   }
 
   private lowerClassScripts(node: Node): Script[] {
@@ -229,6 +241,7 @@ class PyLowerer {
       source: spanOf(node),
     });
     header.shape = "hat";
+    header.fields.name = name;
     header.line = `class ${name} : :: custom hat`;
     out.push({ id: this.id(), x: 0, y: 0, root: header });
     const body = node.childForFieldName("body");
@@ -285,13 +298,25 @@ class PyLowerer {
   }
 
   private lowerExprStmt(node: Node): Block | undefined {
-    if (node.type === "assignment" || node.type === "augmented_assignment") {
+    if (node.type === "assignment" || node.type === "augmented_assignment" || node.type === "annotated_assignment") {
       const left = node.childForFieldName("left") ?? named(node)[0];
       const right = node.childForFieldName("right") ?? named(node)[1];
-      const name = collapse(left?.text ?? "x");
-      return pyPrototype("data.set", this.id, {
-        fields: { var: name },
-        values: { value: right ? this.lowerExpr(right) : litEmpty() },
+      const typeN = node.childForFieldName("type");
+      if (typeN && left) {
+        return pyPrototype("data.declareInit", this.id, {
+          fields: { name: collapse(left.text) },
+          values: {
+            type: this.lowerPyType(typeN),
+            value: right ? this.lowerExpr(right) : litEmpty(),
+          },
+          source: spanOf(node),
+        });
+      }
+      return pyPrototype("data.assign", this.id, {
+        values: {
+          lhs: left ? this.lowerExpr(left) : litEmpty(),
+          rhs: right ? this.lowerExpr(right) : litEmpty(),
+        },
         source: spanOf(node),
       });
     }
@@ -308,21 +333,21 @@ class PyLowerer {
   private lowerCall(node: Node, asStmt: boolean): Block {
     const fn = node.childForFieldName("function");
     const argsNode = node.childForFieldName("arguments");
-    const name = collapse(fn?.text ?? "fn");
     const args = argsNode ? named(argsNode).map((a) => this.lowerExpr(a)) : [];
-    if (name === "print") {
-      return pyPrototype("looks.say", this.id, {
-        values: { message: args[0] ?? litString("") },
-        extraArgs: args.slice(1),
+    if (fn?.type === "attribute") {
+      const obj = fn.childForFieldName("object");
+      const meth = fn.childForFieldName("attribute")?.text ?? "m";
+      const block = pyPrototype("custom.method", this.id, {
+        fields: { name: meth },
+        values: { obj: obj ? this.lowerExpr(obj) : litEmpty() },
+        extraArgs: args,
         source: spanOf(node),
       });
+      block.shape = asStmt ? "stack" : "reporter";
+      block.line = `{obj} . ${meth} :: custom`;
+      return block;
     }
-    if (name === "input") {
-      return pyPrototype("looks.ask", this.id, {
-        values: { prompt: args[0] ?? litString("") },
-        source: spanOf(node),
-      });
-    }
+    const name = collapse(fn?.text ?? "fn");
     const block = pyPrototype(asStmt ? "custom.call" : "custom.reporter", this.id, {
       fields: { name },
       extraArgs: args,
@@ -361,8 +386,31 @@ class PyLowerer {
           source: spanOf(node),
         });
       }
+      case "list":
+      case "tuple":
+      case "set": {
+        const items = named(node).map((n) => this.lowerExpr(n));
+        const block = pyPrototype("custom.reporter", this.id, {
+          fields: { name: node.type === "tuple" ? "" : "" },
+          extraArgs: items,
+          source: spanOf(node),
+        });
+        block.line = "{ } :: operators";
+        block.category = "operators";
+        return block;
+      }
       case "call":
         return this.lowerCall(node, false);
+      case "lambda": {
+        const paramsN = node.childForFieldName("parameters");
+        const body = node.childForFieldName("body");
+        const p0 = paramsN ? named(paramsN)[0]?.text ?? "x" : "x";
+        return pyPrototype("ops.lambda", this.id, {
+          fields: { p0 },
+          values: { body: body ? this.lowerExpr(body) : litEmpty() },
+          source: spanOf(node),
+        });
+      }
       case "attribute": {
         const obj = node.childForFieldName("object");
         const attr = node.childForFieldName("attribute")?.text ?? "x";
@@ -425,6 +473,48 @@ class PyLowerer {
     });
   }
 
+  private lowerPyType(node: Node): Block {
+    if (node.type === "type") {
+      const inner = named(node)[0];
+      return inner ? this.lowerPyType(inner) : pyPrototype("type.named", this.id, { fields: { name: collapse(node.text) || "Any" } });
+    }
+    if (node.type === "generic_type") {
+      const base = named(node).find((n) => n.type === "identifier") ?? named(node)[0];
+      const params = named(node).find((n) => n.type === "type_parameter");
+      const arg = params ? named(params)[0] : named(node)[1];
+      return pyPrototype("type.tmpl", this.id, {
+        values: {
+          base: base ? this.lowerPyType(base) : pyPrototype("type.named", this.id, { fields: { name: "list" } }),
+          arg: arg ? this.lowerPyType(arg) : pyPrototype("type.named", this.id, { fields: { name: "Any" } }),
+        },
+        source: spanOf(node),
+      });
+    }
+    if (node.type === "subscript") {
+      const value = node.childForFieldName("value");
+      const index = node.childForFieldName("subscript") ?? named(node)[1];
+      return pyPrototype("type.tmpl", this.id, {
+        values: {
+          base: value ? this.lowerPyType(value) : pyPrototype("type.named", this.id, { fields: { name: "list" } }),
+          arg: index ? this.lowerPyType(index) : pyPrototype("type.named", this.id, { fields: { name: "Any" } }),
+        },
+        source: spanOf(node),
+      });
+    }
+    if (node.type === "attribute") {
+      const obj = node.childForFieldName("object");
+      const attr = node.childForFieldName("attribute")?.text ?? "x";
+      return pyPrototype("type.tmpl", this.id, {
+        values: {
+          base: obj ? this.lowerPyType(obj) : pyPrototype("type.named", this.id, { fields: { name: "mod" } }),
+          arg: pyPrototype("type.named", this.id, { fields: { name: attr } }),
+        },
+        source: spanOf(node),
+      });
+    }
+    return pyPrototype("type.named", this.id, { fields: { name: collapse(node.text) || "Any" }, source: spanOf(node) });
+  }
+
   private unknown(node: Node): Block {
     return pyPrototype("py.pass", this.id, {
       source: spanOf(node),
@@ -449,7 +539,15 @@ function collapse(text: string): string {
 }
 
 function unquote(text: string): string {
-  return text.replace(/^['"]/, "").replace(/['"]$/, "");
+  let s = text.trim();
+  s = s.replace(/^[fFrRbBuU]+/, "");
+  if ((s.startsWith('"""') && s.endsWith('"""')) || (s.startsWith("'''") && s.endsWith("'''"))) {
+    return s.slice(3, -3);
+  }
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
 }
 
 function paramOf(node: Node): { type: string; name: string } | undefined {

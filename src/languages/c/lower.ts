@@ -3,8 +3,8 @@ import { makeBlock, litEmpty, litNumber, litString, isLiteral } from "../../ir/b
 import { chain, countBlocks, createIdFactory, type IdFactory } from "../../ir/ids";
 import type { Block, Diagnostic, Literal, Program, Script, SourceSpan } from "../../ir/types";
 import { CATALOG, defaultToolbox, groupToolbox } from "../../library/catalog";
-import { hatLine } from "../../library/hats";
-import { headerName, IO_ASK, IO_SAY, stripCString, VOID_CALLEES } from "./builtins";
+import { hatLine, rebuildHat } from "../../library/hats";
+import { headerName, stripCString } from "./builtins";
 
 const BINARY_OPS: Record<string, string> = {
   "+": "ops.add",
@@ -82,8 +82,25 @@ class CLowerer {
           }
           break;
         }
-        case "type_definition":
+        case "class_specifier":
         case "struct_specifier":
+          for (const s of this.classScripts(child)) {
+            scripts.push(s);
+          }
+          break;
+        case "namespace_definition": {
+          const ns = this.lowerNamespace(child);
+          if (ns) {
+            preamble.push(ns);
+          }
+          break;
+        }
+        case "using_declaration":
+        case "using_directive":
+        case "alias_declaration":
+          preamble.push(this.lowerUsing(child));
+          break;
+        case "type_definition":
         case "enum_specifier":
         case "comment":
           break;
@@ -205,7 +222,12 @@ class CLowerer {
     hat.fields.name = info.name;
     hat.fields.returnType = ret;
     hat.params = info.params;
-    hat.line = hatLine(isMain ? "when" : "define", ret, info.name, info.params);
+    hat.line = hatLine(isMain ? "when" : "define", ret, info.name, info.params, hat.fields.parentClass);
+    hat.values.ret = this.typeNamed(ret);
+    info.params.forEach((p, i) => {
+      hat.values[`t${i}`] = this.typeNamed(p.type);
+      hat.fields[`p${i}`] = p.name;
+    });
     if (isMain) {
       hat.comment = "__main__";
     }
@@ -272,16 +294,30 @@ class CLowerer {
       }
       this.variables.add(name);
       const valueNode = init?.childForFieldName("value");
-      const value = valueNode ? this.lowerExpr(valueNode) : litEmpty();
       const stars = countPointerStars(inner);
-      const fullType = `${typeText}${"*".repeat(stars)}`.replace(/\s+\*/g, "*");
-      const set = this.block("data.set", {
-        fields: { var: name, type: fullType },
-        values: { value },
-        source: spanOf(decl),
-      });
-      set.line = `[${fullType} v] ${name} = {value} :: variables`;
-      blocks.push(set);
+      let typeBlock = this.lowerType(typeNode);
+      if (stars) {
+        for (let i = 0; i < stars; i++) {
+          typeBlock = this.block("type.ptr", { values: { inner: typeBlock } });
+        }
+      }
+      if (valueNode) {
+        blocks.push(
+          this.block("data.declareInit", {
+            fields: { name },
+            values: { type: typeBlock, value: this.lowerExpr(valueNode) },
+            source: spanOf(decl),
+          }),
+        );
+      } else {
+        blocks.push(
+          this.block("data.declare", {
+            fields: { name },
+            values: { type: typeBlock },
+            source: spanOf(decl),
+          }),
+        );
+      }
     }
     return blocks;
   }
@@ -301,6 +337,8 @@ class CLowerer {
         return this.lowerDo(node);
       case "for_statement":
         return this.lowerFor(node);
+      case "for_range_loop":
+        return this.lowerForRange(node);
       case "switch_statement":
         return this.lowerSwitch(node);
       case "return_statement":
@@ -551,6 +589,12 @@ class CLowerer {
     if (node.type === "call_expression") {
       return this.lowerCall(node, true);
     }
+    if (node.type === "delete_expression") {
+      return this.lowerDelete(node, true);
+    }
+    if (node.type === "new_expression") {
+      return this.block("c.eval", { values: { value: this.lowerNew(node) }, source: spanOf(node) });
+    }
     if (node.type === "comma_expression") {
       const left = node.childForFieldName("left");
       const right = node.childForFieldName("right");
@@ -577,127 +621,165 @@ class CLowerer {
     const left = node.childForFieldName("left");
     const right = node.childForFieldName("right");
     const op = node.childForFieldName("operator")?.text ?? "=";
-    const value = right ? this.lowerExpr(right) : litEmpty();
-    if (left?.type === "subscript_expression" && op === "=") {
-      const arrayNode = left.childForFieldName("argument");
-      const indexNode = left.childForFieldName("index");
-      return this.block("data.replaceItem", {
-        values: {
-          index: indexNode ? this.lowerExpr(indexNode) : litNumber(0),
-          array: arrayNode ? this.lowerExpr(arrayNode) : litEmpty(),
-          value,
-        },
-        source: spanOf(node),
-      });
-    }
-    const name = left && left.type === "identifier" ? left.text : undefined;
-    if (name && op === "=") {
-      this.variables.add(name);
-      return this.block("data.set", { fields: { var: name }, values: { value }, source: spanOf(node) });
-    }
-    if (name && op === "+=") {
-      this.variables.add(name);
-      return this.block("data.change", { fields: { var: name }, values: { value }, source: spanOf(node) });
-    }
-    if (name && op === "-=") {
-      this.variables.add(name);
-      const neg = this.block("ops.neg", { values: { inner: value } });
-      return this.block("data.change", { fields: { var: name }, values: { value: neg }, source: spanOf(node) });
-    }
+    const rhs = right ? this.lowerExpr(right) : litEmpty();
     const lhs = left ? this.lowerExpr(left) : litEmpty();
-    const set = this.block("data.set", {
-      fields: { var: collapse(left?.text ?? "lhs") },
-      values: { value },
-      source: spanOf(node),
-    });
-    if (lhs && !name) {
-      set.comment = collapse(left?.text ?? "");
+    if (op === "+=") {
+      return this.block("data.change", { values: { lhs, rhs }, source: spanOf(node) });
     }
-    return set;
+    if (op === "-=") {
+      const neg = this.block("ops.neg", { values: { inner: rhs } });
+      return this.block("data.change", { values: { lhs, rhs: neg }, source: spanOf(node) });
+    }
+    return this.block("data.assign", { values: { lhs, rhs }, source: spanOf(node) });
   }
 
   private lowerUpdate(node: Node, asStatement: boolean): Block {
     const arg = node.childForFieldName("argument") ?? named(node)[0];
     const text = node.text;
     const dir = text.includes("--") ? -1 : 1;
-    const name = arg?.type === "identifier" ? arg.text : collapse(arg?.text ?? "x");
-    this.variables.add(name);
+    const lhs = arg ? this.lowerExpr(arg) : this.block("data.get", { fields: { var: "x" } });
     const block = this.block("data.change", {
-      fields: { var: name },
-      values: { value: litNumber(dir) },
+      values: { lhs, rhs: litNumber(dir) },
       source: spanOf(node),
     });
     if (asStatement) {
       return block;
     }
-    return this.block("data.get", { fields: { var: name }, source: spanOf(node) });
+    if (arg) {
+      const value = this.lowerExpr(arg);
+      if (!isLiteral(value)) {
+        return value;
+      }
+    }
+    return this.block("data.get", { fields: { var: collapse(arg?.text ?? "x") }, source: spanOf(node) });
   }
 
   private lowerCall(node: Node, asStatement: boolean): Block {
     const fnNode = node.childForFieldName("function");
     const argsNode = node.childForFieldName("arguments");
-    const fnName = fnNode?.type === "identifier" ? fnNode.text : collapse(fnNode?.text ?? "call");
     const args = argsNode ? named(argsNode).map((a) => this.lowerExpr(a)) : [];
-
-    if (fnName === "malloc" || fnName === "calloc" || fnName === "realloc") {
-      const size = fnName === "calloc" && args.length >= 2
-        ? this.block("ops.mul", { values: { left: args[0], right: args[1] } })
-        : (args[0] ?? litEmpty());
-      const reporter = this.block("sensing.malloc", { values: { size }, source: spanOf(node) });
-      if (asStatement) {
-        return this.block("c.eval", { values: { value: reporter }, source: spanOf(node) });
-      }
-      return reporter;
+    if (fnNode?.type === "field_expression") {
+      const obj = fnNode.childForFieldName("argument");
+      const meth = fnNode.childForFieldName("field")?.text ?? "m";
+      const block = this.block("custom.method", {
+        fields: { name: meth },
+        values: { obj: obj ? this.lowerExpr(obj) : litEmpty() },
+        extraArgs: args,
+        source: spanOf(node),
+      });
+      block.shape = asStatement ? "stack" : "reporter";
+      block.line = `{obj} . ${meth} :: custom`;
+      return block;
     }
-    if (fnName === "free") {
-      return this.block("sensing.free", { values: { value: args[0] ?? litEmpty() }, source: spanOf(node) });
+    if (fnNode && (fnNode.type === "template_function" || fnNode.type === "template_method")) {
+      const nameNode = fnNode.childForFieldName("name") ?? named(fnNode)[0];
+      const targs = fnNode.childForFieldName("arguments");
+      const targ0 = targs ? named(targs)[0] : undefined;
+      const block = this.block("custom.tmplCall", {
+        fields: { name: collapse(nameNode?.text ?? "f") },
+        values: { targ: targ0 ? this.lowerType(targ0) : this.typeNamed("T") },
+        extraArgs: args,
+        source: spanOf(node),
+      });
+      block.shape = asStatement ? "stack" : "reporter";
+      return block;
     }
-    if (fnName === "exit" || fnName === "abort") {
-      return this.block("control.stopAll", { source: spanOf(node) });
-    }
-    if (fnName === "sleep") {
-      return this.block("control.wait", { values: { secs: args[0] ?? litNumber(1) }, source: spanOf(node) });
-    }
-    if (IO_SAY.has(fnName)) {
-      return this.lowerPrintf(node, args, asStatement);
-    }
-    if (IO_ASK.has(fnName)) {
-      const prompt = args[0] ?? litString("?");
-      return this.block("looks.ask", { values: { prompt }, source: spanOf(node) });
-    }
-    if (fnName === "sizeof") {
-      const reporter = this.block("sensing.sizeof", { values: { value: args[0] ?? litEmpty() }, source: spanOf(node) });
-      return asStatement ? this.block("c.eval", { values: { value: reporter } }) : reporter;
-    }
-
-    const voidish = asStatement || VOID_CALLEES.has(fnName);
-    const call = this.block(voidish ? "custom.call" : "custom.reporter", {
+    const fnName = fnNode?.type === "identifier" ? fnNode.text : collapse(fnNode?.text ?? "f");
+    const call = this.block(asStatement ? "custom.call" : "custom.reporter", {
       fields: { name: fnName },
       extraArgs: args,
       source: spanOf(node),
     });
-    call.line = voidish ? `${fnName} :: custom` : `${fnName} :: custom`;
+    call.line = `${fnName} :: custom`;
     return call;
   }
 
-  private lowerPrintf(node: Node, args: (Block | Literal)[], asStatement: boolean): Block {
-    if (args.length === 1 && isLiteral(args[0]) && args[0].kind === "string") {
-      return this.block("looks.say", { values: { message: args[0] }, source: spanOf(node) });
+  private typeNamed(name: string): Block {
+    return this.block("type.named", { fields: { name: name || "int" } });
+  }
+
+  private lowerType(node: Node | null): Block {
+    if (!node) {
+      return this.typeNamed("int");
     }
-    if (args.length === 0) {
-      return this.block("looks.say", { values: { message: litString("") }, source: spanOf(node) });
+    switch (node.type) {
+      case "primitive_type":
+      case "type_identifier":
+      case "sized_type_specifier":
+      case "placeholder_type_specifier":
+      case "auto":
+        return this.typeNamed(collapse(node.text));
+      case "qualified_identifier":
+      case "scoped_identifier":
+      case "scoped_type_identifier":
+      case "nested_namespace_specifier":
+        return this.lowerQualified(node, true);
+      case "template_type":
+      case "template_function":
+        return this.lowerTemplate(node, true);
+      case "type_descriptor": {
+        const inner = node.childForFieldName("type") ?? named(node)[0];
+        let t = this.lowerType(inner);
+        const stars = countPointerStars(node.childForFieldName("declarator"));
+        for (let i = 0; i < stars; i++) {
+          t = this.block("type.ptr", { values: { inner: t } });
+        }
+        return t;
+      }
+      default:
+        return this.typeNamed(collapse(node.text) || "int");
     }
-    const message = args[0];
-    const block = this.block("looks.printf", {
-      values: { message },
-      extraArgs: args.slice(1),
+  }
+
+  private lowerQualified(node: Node, asType: boolean): Block {
+    const kids = named(node);
+    const opcode = asType ? "type.scope" : "ops.scope";
+    if (kids.length >= 2) {
+      const left = kids[0];
+      const right = kids[kids.length - 1];
+      return this.block(opcode, {
+        values: {
+          left: asType ? this.lowerType(left) : this.lowerExpr(left),
+          right: asType ? this.lowerType(right) : this.lowerExpr(right),
+        },
+        source: spanOf(node),
+      });
+    }
+    if (asType) {
+      return this.typeNamed(collapse(node.text));
+    }
+    return this.block("data.get", { fields: { var: collapse(node.text) }, source: spanOf(node) });
+  }
+
+  private lowerTemplate(node: Node, asType: boolean): Block {
+    const base = node.childForFieldName("name") ?? named(node)[0];
+    const argsN = node.childForFieldName("arguments") ?? named(node).find((n) => n.type.includes("argument"));
+    const args = argsN ? named(argsN) : [];
+    return this.block("type.tmpl", {
+      values: {
+        base: base ? (asType ? this.lowerType(base) : this.lowerExpr(base)) : this.typeNamed("T"),
+        arg: args[0] ? this.lowerType(args[0]) : this.typeNamed("T"),
+      },
+      extraArgs: args.slice(1).map((a) => this.lowerType(a)),
       source: spanOf(node),
     });
-    if (!asStatement) {
-      block.shape = "reporter";
-      block.opcode = "custom.reporter";
-    }
-    return block;
+  }
+
+  private lowerForRange(node: Node): Block {
+    const typeN = node.childForFieldName("type");
+    const left = node.childForFieldName("left") ?? node.childForFieldName("declarator");
+    const right = node.childForFieldName("right");
+    const body = node.childForFieldName("body");
+    const varName = declaratorName(left) ?? collapse(left?.text ?? "x");
+    return this.block("control.forRange", {
+      fields: { var: varName },
+      values: {
+        type: typeN ? this.lowerType(typeN) : this.typeNamed("auto"),
+        range: right ? this.lowerExpr(right) : litEmpty(),
+      },
+      branches: { body: body ? this.lowerStatement(body) : undefined },
+      source: spanOf(node),
+    });
   }
 
   private lowerExpr(node: Node, asBoolean = false): Block | Literal {
@@ -719,11 +801,24 @@ class CLowerer {
       case "null":
         return this.block("sensing.null", { source: spanOf(node) });
       case "identifier":
-        if (node.text === "NULL") {
+      case "namespace_identifier":
+      case "field_identifier":
+      case "type_identifier":
+        if (node.text === "NULL" || node.text === "nullptr") {
           return this.block("sensing.null", { source: spanOf(node) });
         }
         this.variables.add(node.text);
         return this.block("data.get", { fields: { var: node.text }, source: spanOf(node) });
+      case "this":
+        return this.block("data.get", { fields: { var: "this" }, source: spanOf(node) });
+      case "qualified_identifier":
+      case "scoped_identifier":
+      case "scoped_namespace_identifier":
+      case "scoped_type_identifier":
+        return this.lowerQualified(node, false);
+      case "template_type":
+      case "template_function":
+        return this.lowerTemplate(node, false);
       case "parenthesized_expression": {
         const inner = named(node)[0];
         return inner ? this.lowerExpr(inner, asBoolean) : litEmpty();
@@ -750,6 +845,23 @@ class CLowerer {
         return this.lowerSubscript(node);
       case "conditional_expression":
         return this.lowerTernary(node);
+      case "new_expression":
+        return this.lowerNew(node);
+      case "delete_expression":
+        return this.lowerDelete(node, false);
+      case "lambda_expression":
+        return this.lowerLambda(node);
+      case "initializer_list": {
+        const items = named(node).map((n) => this.lowerExpr(n));
+        const block = this.block("custom.reporter", {
+          fields: { name: "" },
+          extraArgs: items,
+          source: spanOf(node),
+        });
+        block.line = "{ } :: operators";
+        block.category = "operators";
+        return block;
+      }
       case "comma_expression": {
         const right = node.childForFieldName("right");
         return right ? this.lowerExpr(right, asBoolean) : litEmpty();
@@ -812,8 +924,8 @@ class CLowerer {
   private lowerSizeof(node: Node): Block {
     const inner = node.childForFieldName("value") ?? node.childForFieldName("type") ?? named(node)[0];
     const value = inner
-      ? inner.type === "type_descriptor" || inner.type === "primitive_type" || inner.type === "type_identifier"
-        ? litString(collapse(inner.text))
+      ? inner.type === "type_descriptor" || inner.type === "primitive_type" || inner.type === "type_identifier" || inner.type === "template_type"
+        ? this.lowerType(inner)
         : this.lowerExpr(inner)
       : litEmpty();
     return this.block("sensing.sizeof", { values: { value }, source: spanOf(node) });
@@ -823,8 +935,10 @@ class CLowerer {
     const typeNode = node.childForFieldName("type");
     const valueNode = node.childForFieldName("value");
     return this.block("ops.cast", {
-      fields: { type: collapse(typeNode?.text ?? "int") },
-      values: { value: valueNode ? this.lowerExpr(valueNode) : litEmpty() },
+      values: {
+        type: typeNode ? this.lowerType(typeNode) : this.typeNamed("int"),
+        value: valueNode ? this.lowerExpr(valueNode) : litEmpty(),
+      },
       source: spanOf(node),
     });
   }
@@ -834,10 +948,16 @@ class CLowerer {
     const field = node.childForFieldName("field")?.text ?? "field";
     const op = node.childForFieldName("operator")?.text ?? ".";
     const value = arg ? this.lowerExpr(arg) : litEmpty();
-    const inner = op === "->" ? this.block("sensing.deref", { values: { value } }) : value;
+    if (op === "->") {
+      return this.block("sensing.arrow", {
+        fields: { field },
+        values: { value },
+        source: spanOf(node),
+      });
+    }
     return this.block("sensing.field", {
       fields: { field },
-      values: { value: inner },
+      values: { value },
       source: spanOf(node),
     });
   }
@@ -866,6 +986,144 @@ class CLowerer {
       },
       source: spanOf(node),
     });
+  }
+
+  private classScripts(node: Node): Script[] {
+    const name = node.childForFieldName("name")?.text ?? "T";
+    const kind = node.type === "struct_specifier" ? "struct" : "class";
+    const bodyNode = node.childForFieldName("body");
+    const members: Block[] = [];
+    const methods: Script[] = [];
+    if (bodyNode) {
+      for (const child of named(bodyNode)) {
+        if (child.type === "access_specifier") {
+          continue;
+        }
+        if (child.type === "function_definition") {
+          const script = this.functionScript(child);
+          if (script) {
+            script.root.fields.parentClass = name;
+            rebuildHat(script.root);
+            methods.push(script);
+          }
+          continue;
+        }
+        if (child.type === "field_declaration" || child.type === "declaration") {
+          members.push(...this.declarationBlocks(child));
+        }
+      }
+    }
+    const root = this.block("cpp.class", {
+      fields: { name, kind },
+      branches: { body: chain(members) },
+      source: spanOf(node),
+    });
+    root.line = `${kind} ${name} {`;
+    return [{ id: this.id(), x: 0, y: 0, root }, ...methods];
+  }
+
+  private lowerNamespace(node: Node): Block | undefined {
+    const name = node.childForFieldName("name")?.text ?? "ns";
+    const body = node.childForFieldName("body");
+    const parts: Block[] = [];
+    if (body) {
+      for (const child of named(body)) {
+        if (child.type === "declaration") {
+          parts.push(...this.declarationBlocks(child));
+        } else if (child.type === "using_declaration" || child.type === "using_directive") {
+          parts.push(this.lowerUsing(child));
+        }
+      }
+    }
+    return this.block("cpp.namespace", {
+      fields: { name },
+      branches: { body: chain(parts) },
+      source: spanOf(node),
+    });
+  }
+
+  private lowerUsing(node: Node): Block {
+    return this.block("cpp.using", {
+      fields: { name: collapse(node.text).replace(/^using\s+/, "").replace(/;$/, "") },
+      source: spanOf(node),
+    });
+  }
+
+  private lowerNew(node: Node): Block {
+    const typeN = node.childForFieldName("type");
+    const argsN = node.childForFieldName("arguments");
+    const args = argsN ? named(argsN).map((a) => this.lowerExpr(a)) : [];
+    return this.block("cpp.new", {
+      values: { type: typeN ? this.lowerType(typeN) : this.typeNamed("T") },
+      extraArgs: args,
+      source: spanOf(node),
+    });
+  }
+
+  private lowerDelete(node: Node, asStatement: boolean): Block {
+    const arg = node.childForFieldName("value") ?? named(node)[0];
+    const block = this.block("cpp.delete", {
+      values: { value: arg ? this.lowerExpr(arg) : litEmpty() },
+      source: spanOf(node),
+    });
+    if (asStatement) {
+      return block;
+    }
+    return block;
+  }
+
+  private lowerLambda(node: Node): Block {
+    const bodyN = node.childForFieldName("body");
+    const decl = node.childForFieldName("declarator");
+    const params: { type: string; name: string }[] = [];
+    if (decl) {
+      const plist = decl.childForFieldName("parameters") ?? named(decl).find((n) => n.type === "parameter_list");
+      if (plist) {
+        for (const p of named(plist)) {
+          if (p.type === "parameter_declaration") {
+            const n = declaratorName(p.childForFieldName("declarator"));
+            if (n) {
+              params.push({ type: collapse(p.childForFieldName("type")?.text ?? "auto"), name: n });
+            }
+          }
+        }
+      }
+    }
+    if (!params.length) {
+      params.push({ type: "auto", name: "x" });
+    }
+    const bodyIsCompound = bodyN?.type === "compound_statement";
+    const stmts = bodyIsCompound && bodyN ? named(bodyN) : [];
+    const oneReturn = stmts.length === 1 && stmts[0].type === "return_statement";
+    if (bodyIsCompound && stmts.length && !oneReturn) {
+      const block = this.block("ops.lambdaBlock", {
+        fields: Object.fromEntries(params.map((p, i) => [`p${i}`, p.name])),
+        values: Object.fromEntries(params.map((p, i) => [`t${i}`, this.typeNamed(p.type)])),
+        branches: { body: this.lowerStatement(bodyN!) },
+        source: spanOf(node),
+      });
+      block.params = params;
+      block.line = `[ ] ( ${params.map((_, i) => `{t${i}} {p${i}}`).join(" , ")} ) {`;
+      return block;
+    }
+    let bodyExpr: Block | Literal = litEmpty();
+    if (oneReturn) {
+      const inner = named(stmts[0])[0];
+      bodyExpr = inner ? this.lowerExpr(inner) : litEmpty();
+    } else if (bodyN && bodyN.type !== "compound_statement") {
+      bodyExpr = this.lowerExpr(bodyN);
+    }
+    const block = this.block("ops.lambda", {
+      fields: Object.fromEntries(params.map((p, i) => [`p${i}`, p.name])),
+      values: {
+        ...Object.fromEntries(params.map((p, i) => [`t${i}`, this.typeNamed(p.type)])),
+        body: bodyExpr,
+      },
+      source: spanOf(node),
+    });
+    block.params = params;
+    block.line = `[ ] ( ${params.map((_, i) => `{t${i}} {p${i}}`).join(" , ")} ) { {body} } :: operators`;
+    return block;
   }
 
   private unknown(node: Node, shape: "stack" | "reporter" | "boolean"): Block {
@@ -966,7 +1224,7 @@ function declaratorName(node: Node | null): string | undefined {
   if (!node) {
     return undefined;
   }
-  if (node.type === "identifier") {
+  if (node.type === "identifier" || node.type === "field_identifier") {
     return node.text;
   }
   const inner = node.childForFieldName("declarator") ?? named(node).find((n) => n.type !== "parameter_list");
