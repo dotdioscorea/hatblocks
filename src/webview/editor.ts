@@ -21,8 +21,6 @@ const SNAP = 36;
 let program: Program | undefined;
 let selectedId: string | undefined;
 let selectedBlockId: string | undefined;
-let panX = 16;
-let panY = 16;
 let zoom = 1;
 let libraryProto: Block | undefined;
 let dragging = false;
@@ -34,12 +32,12 @@ app.id = "app";
 app.innerHTML = `
   <div class="stage-wrap" id="stageWrap">
     <div class="gutter" id="gutter"></div>
-    <div class="canvas">
-      <div class="stage" id="stage">
+    <div class="canvas" id="canvas">
+      <div class="world-wrap" id="worldWrap">
         <div class="world" id="world"></div>
-        <div class="snap-guide" id="guide"></div>
+        <svg class="snap-notch" id="snapNotch" width="200" height="20"></svg>
       </div>
-      <svg class="snap-notch" id="snapNotch" width="200" height="20"></svg>
+      <div class="snap-guide" id="guide"></div>
     </div>
     <div class="hud">
       <button class="flag" id="run" title="Green flag — compile and run">
@@ -65,7 +63,9 @@ document.head.appendChild(style);
 ensureScratchStyles();
 
 const world = $("world");
+const worldWrap = $("worldWrap");
 const stageWrap = $("stageWrap");
+const canvasEl = $("canvas");
 const guide = $("guide");
 const gutter = $("gutter");
 let packOnce = false;
@@ -109,7 +109,6 @@ $("run").addEventListener("click", () => post({ type: "run" }));
 $("addArg").addEventListener("click", () => mutateSelected(1));
 $("delArg").addEventListener("click", () => mutateSelected(-1));
 
-const canvasEl = document.querySelector(".canvas") as HTMLElement;
 canvasEl.addEventListener("dragover", (event) => {
   event.preventDefault();
   if (event.dataTransfer) {
@@ -140,34 +139,23 @@ canvasEl.addEventListener("drop", (event) => {
 });
 
 stageWrap.addEventListener("wheel", (event) => {
-  event.preventDefault();
   if (event.metaKey || event.ctrlKey) {
+    event.preventDefault();
     const factor = event.deltaY > 0 ? 0.92 : 1.08;
     zoom = Math.min(2.4, Math.max(0.35, zoom * factor));
-  } else {
-    panY -= event.deltaY;
-    panX -= event.deltaX;
+    applyView();
   }
-  applyPan();
 }, { passive: false });
-
-let panning: { x: number; y: number; px: number; py: number } | undefined;
+canvasEl.addEventListener("scroll", () => {
+  renderGutter();
+});
 stageWrap.addEventListener("pointerdown", (event) => {
-  if ((event.target as HTMLElement).closest(".script")) {
+  if ((event.target as HTMLElement).closest(".script, .gap-ui")) {
     return;
   }
   clearHover();
-  panning = { x: panX, y: panY, px: event.clientX, py: event.clientY };
-  stageWrap.classList.add("panning");
-  stageWrap.setPointerCapture(event.pointerId);
 });
 stageWrap.addEventListener("pointermove", (event) => {
-  if (panning) {
-    panX = panning.x + (event.clientX - panning.px);
-    panY = panning.y + (event.clientY - panning.py);
-    applyPan();
-    return;
-  }
   if (!dragging && !(event.target as HTMLElement).closest(".script")) {
     clearHover();
   }
@@ -177,29 +165,25 @@ stageWrap.addEventListener("pointerleave", () => {
     clearHover();
   }
 });
-stageWrap.addEventListener("pointerup", () => {
-  panning = undefined;
-  stageWrap.classList.remove("panning");
-});
 
 window.addEventListener("keydown", (event) => {
   const mod = event.metaKey || event.ctrlKey;
   if (mod && (event.key === "=" || event.key === "+" || event.code === "Equal")) {
     event.preventDefault();
     zoom = Math.min(2.4, zoom * 1.1);
-    applyPan();
+    applyView();
     return;
   }
   if (mod && (event.key === "-" || event.code === "Minus")) {
     event.preventDefault();
     zoom = Math.max(0.35, zoom / 1.1);
-    applyPan();
+    applyView();
     return;
   }
   if (mod && event.key === "0") {
     event.preventDefault();
     zoom = 1;
-    applyPan();
+    applyView();
     return;
   }
   if (mod && event.key.toLowerCase() === "z") {
@@ -223,9 +207,31 @@ window.addEventListener("keydown", (event) => {
   }
 });
 
-function applyPan(): void {
-  world.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+function applyView(): void {
+  const bounds = contentBounds();
+  world.style.width = `${bounds.w}px`;
+  world.style.height = `${bounds.h}px`;
+  world.style.transform = `scale(${zoom})`;
+  world.style.transformOrigin = "0 0";
+  worldWrap.style.width = `${bounds.w * zoom}px`;
+  worldWrap.style.height = `${bounds.h * zoom}px`;
   renderGutter();
+}
+
+function contentBounds(): { w: number; h: number } {
+  const minW = Math.max(1, canvasEl.clientWidth / zoom);
+  const minH = Math.max(1, canvasEl.clientHeight / zoom);
+  let w = minW;
+  let h = minH;
+  if (!program) {
+    return { w, h };
+  }
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    w = Math.max(w, script.x + (el?.offsetWidth ?? 200) + 48);
+    h = Math.max(h, script.y + (el?.offsetHeight ?? 72) + 48);
+  }
+  return { w, h };
 }
 
 function renderAll(): void {
@@ -243,7 +249,7 @@ function renderAll(): void {
     packVertically();
     renderScripts();
   }
-  applyPan();
+  applyView();
 }
 
 function scriptHeight(script: Script): number {
@@ -339,27 +345,25 @@ function renderGaps(): void {
       continue;
     }
     const gap = Math.max(1, curr.gapBefore ?? Math.round(height / LINE_H) ?? 1);
-    const prevEl = world.querySelector(`.script[data-id="${prev.id}"]`) as HTMLElement | null;
-    const currEl = world.querySelector(`.script[data-id="${curr.id}"]`) as HTMLElement | null;
-    const width = Math.max(240, prevEl?.offsetWidth ?? 0, currEl?.offsetWidth ?? 0);
-    const ui = document.createElement("div");
-    ui.className = "gap-ui";
-    ui.style.left = `${Math.min(prev.x, curr.x)}px`;
-    ui.style.top = `${top}px`;
-    ui.style.height = `${height}px`;
-    ui.style.width = `${width}px`;
-    const rules = Array.from({ length: gap }, () => `<div class="gap-rule"></div>`).join("");
-    ui.innerHTML = `<div class="gap-btns"><button type="button" class="gap-btn" data-act="add" title="Add a blank line">+</button><button type="button" class="gap-btn" data-act="remove" title="Remove a blank line" ${gap <= 1 ? "disabled" : ""}>−</button></div><div class="gap-rules">${rules}</div>`;
-    ui.addEventListener("pointerdown", (event) => event.stopPropagation());
-    ui.querySelector('[data-act="add"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      bumpGap(curr, 1);
-    });
-    ui.querySelector('[data-act="remove"]')?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      bumpGap(curr, -1);
-    });
-    world.appendChild(ui);
+    for (let k = 0; k < gap; k++) {
+      const ui = document.createElement("div");
+      ui.className = "gap-ui";
+      ui.style.left = "0";
+      ui.style.right = "0";
+      ui.style.top = `${top + k * LINE_H}px`;
+      ui.style.height = `${LINE_H}px`;
+      ui.innerHTML = `<div class="gap-btns"><button type="button" class="gap-btn" data-act="add" title="Add a blank line">+</button><button type="button" class="gap-btn" data-act="remove" title="Remove a blank line" ${gap <= 1 ? "disabled" : ""}>−</button></div><div class="gap-rule"></div>`;
+      ui.addEventListener("pointerdown", (event) => event.stopPropagation());
+      ui.querySelector('[data-act="add"]')?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        bumpGap(curr, 1);
+      });
+      ui.querySelector('[data-act="remove"]')?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        bumpGap(curr, -1);
+      });
+      world.appendChild(ui);
+    }
   }
 }
 
@@ -411,7 +415,7 @@ function renderGutter(): void {
       n.className = `ln${mark.block.id === selectedBlockId ? " active" : ""}`;
       n.textContent = String(mark.line);
       n.title = `Line ${mark.line}`;
-      n.style.top = `${panY + (script.y + mark.y) * zoom}px`;
+      n.style.top = `${(script.y + mark.y) * zoom - canvasEl.scrollTop}px`;
       n.style.height = `${Math.max(12, (mark.headerH || Math.min(mark.h, 36)) * zoom)}px`;
       n.style.paddingTop = `${Math.max(0, 2 * zoom)}px`;
       gutter.appendChild(n);
@@ -420,10 +424,10 @@ function renderGutter(): void {
 }
 
 function clientToWorld(cx: number, cy: number): { x: number; y: number } {
-  const canvas = document.querySelector(".canvas")!.getBoundingClientRect();
+  const rect = canvasEl.getBoundingClientRect();
   return {
-    x: (cx - canvas.left - panX) / zoom,
-    y: (cy - canvas.top - panY) / zoom,
+    x: (cx - rect.left + canvasEl.scrollLeft) / zoom,
+    y: (cy - rect.top + canvasEl.scrollTop) / zoom,
   };
 }
 
@@ -953,8 +957,8 @@ function showSnap(moving: Script): void {
   const w = snap.w;
   notch.setAttribute("width", String(w));
   notch.setAttribute("height", "16");
-  notch.style.left = `${panX + snap.x * zoom}px`;
-  notch.style.top = `${panY + snap.y * zoom}px`;
+  notch.style.left = `${snap.x * zoom}px`;
+  notch.style.top = `${snap.y * zoom}px`;
   notch.innerHTML = `<path d="M0 4 H12 C16 4 16 12 22 12 H36 C42 12 42 4 48 4 H${w}" fill="none" stroke="#fff04d" stroke-width="3" stroke-linecap="round"/>`;
   notch.classList.add("show");
   guide.classList.remove("show");

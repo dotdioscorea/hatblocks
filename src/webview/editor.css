@@ -16,10 +16,8 @@ html, body {
   flex: 1;
   position: relative;
   overflow: hidden;
-  cursor: grab;
   background: var(--vscode-editor-background);
 }
-.stage-wrap.panning { cursor: grabbing; }
 
 .gutter {
   position: absolute;
@@ -51,9 +49,19 @@ html, body {
 .canvas {
   position: absolute;
   inset: 0 0 0 52px;
+  overflow: auto;
 }
-.stage { position: absolute; inset: 0; }
-.world { position: absolute; transform-origin: 0 0; }
+.world-wrap {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+}
+.world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+}
 
 .script {
   position: absolute;
@@ -69,28 +77,26 @@ html, body {
   gap: 8px;
   z-index: 8;
   opacity: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 8px;
   transition: opacity 0.12s ease;
 }
 .gap-ui:hover { opacity: 1; }
 .gap-btns {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 3px;
   flex-shrink: 0;
-}
-.gap-rules {
-  flex: 1;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-evenly;
-  pointer-events: none;
-  min-width: 0;
+  padding-left: 8px;
 }
 .gap-rule {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  height: 0;
   border-top: 1px dashed var(--vscode-editorLineNumber-foreground, #858585);
-  opacity: 0.85;
+  opacity: 0.9;
+  pointer-events: none;
 }
 .gap-btn {
   width: 20px;
