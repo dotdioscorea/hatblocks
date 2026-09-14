@@ -26,6 +26,15 @@ let libraryProto: Block | undefined;
 let dragging = false;
 let hoverKey = "";
 const marksCache = new WeakMap<SVGElement, Mark[]>();
+const SLOT_PX = 54;
+let arityDrag:
+  | {
+      blockId: string;
+      startX: number;
+      startCount: number;
+      kind: "args" | "params";
+    }
+  | undefined;
 
 const app = document.createElement("div");
 app.id = "app";
@@ -312,10 +321,11 @@ function renderScripts(): void {
     el.appendChild(renderCodeSvg(script.code, SCALE));
     el.addEventListener("pointerdown", (event) => startBlockDrag(event, script.id));
     el.addEventListener("pointermove", (event) => {
-      if (dragging) {
+      if (dragging || arityDrag) {
         return;
       }
       hoverScript(script.id, event);
+      updateArityHandleHot(script.id, event);
     });
     el.addEventListener("pointerleave", () => clearHover(script.id));
     el.addEventListener("dblclick", (event) => {
@@ -325,6 +335,7 @@ function renderScripts(): void {
     world.appendChild(el);
   }
   renderGaps();
+  placeArityHandles();
   hoverKey = "";
   paintSelection();
   renderGutter();
@@ -478,6 +489,155 @@ function isCall(block: Block): boolean {
 
 function isReporterish(block: Block): boolean {
   return block.shape === "reporter" || block.shape === "boolean";
+}
+
+function isArityBlock(block: Block): boolean {
+  return isCall(block) || isFnSig(block);
+}
+
+function arityCount(block: Block): number {
+  return isFnSig(block) ? block.params?.length ?? 0 : block.extraArgs?.length ?? 0;
+}
+
+function arityMin(block: Block): number {
+  return block.opcode === "ops.chain" ? 1 : 0;
+}
+
+function isEmptySlot(block: Block, index: number): boolean {
+  if (isFnSig(block)) {
+    const name = block.params?.[index]?.name ?? "";
+    return !name.trim();
+  }
+  const arg = block.extraArgs?.[index];
+  return !arg || (isLiteral(arg) && arg.kind === "empty");
+}
+
+function setArity(block: Block, count: number): boolean {
+  const min = arityMin(block);
+  let next = Math.max(min, count);
+  if (isFnSig(block)) {
+    block.params = block.params ?? [];
+    while (block.params.length < next) {
+      block.params.push({ type: program?.language === "python" ? "Any" : "int", name: "" });
+    }
+    while (block.params.length > next && block.params.length > min && isEmptySlot(block, block.params.length - 1)) {
+      block.params.pop();
+    }
+    next = block.params.length;
+    rebuildHat(block);
+  } else {
+    block.extraArgs = block.extraArgs ?? [];
+    while (block.extraArgs.length < next) {
+      block.extraArgs.push(litEmpty());
+      if (block.opcode === "ops.chain") {
+        const i = block.extraArgs.length - 1;
+        block.fields[`op${i}`] = block.fields.op || "+";
+      }
+    }
+    while (block.extraArgs.length > next && block.extraArgs.length > min && isEmptySlot(block, block.extraArgs.length - 1)) {
+      block.extraArgs.pop();
+    }
+    next = block.extraArgs.length;
+    if (block.opcode === "ops.chain") {
+      rebuildChain(block);
+    } else {
+      rebuildCall(block);
+    }
+  }
+}
+
+function rectIn(el: HTMLElement, r: DOMRect): { x: number; y: number; w: number; h: number } {
+  const sr = el.getBoundingClientRect();
+  const sx = el.offsetWidth / Math.max(1, sr.width);
+  const sy = el.offsetHeight / Math.max(1, sr.height);
+  return {
+    x: (r.left - sr.left) * sx,
+    y: (r.top - sr.top) * sy,
+    w: r.width * sx,
+    h: r.height * sy,
+  };
+}
+
+function placeArityHandles(): void {
+  if (!program) {
+    return;
+  }
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    if (!el) {
+      continue;
+    }
+    for (const mark of marksForScript(script)) {
+      if (mark.role === "closer" || !mark.el || !isArityBlock(mark.block)) {
+        continue;
+      }
+      const box = rectIn(el, mark.el.getBoundingClientRect());
+      const handle = document.createElement("div");
+      handle.className = "arity-handle";
+      handle.dataset.block = mark.block.id;
+      handle.title = "Drag to add or remove slots";
+      handle.style.left = `${box.x + box.w - 6}px`;
+      handle.style.top = `${box.y + 4}px`;
+      handle.style.height = `${Math.max(16, Math.min(box.h, mark.headerH || box.h) - 8)}px`;
+      handle.addEventListener("pointerdown", (event) => startArityDrag(event, mark.block));
+      el.appendChild(handle);
+    }
+  }
+}
+
+function updateArityHandleHot(scriptId: string, event: PointerEvent): void {
+  const script = findScript(scriptId);
+  const el = world.querySelector(`.script[data-id="${scriptId}"]`) as HTMLElement | null;
+  if (!script || !el) {
+    return;
+  }
+  const marks = marksForScript(script);
+  const hit = hitMark(marks, clientToWorld(event.clientX, event.clientY).y - script.y);
+  el.querySelectorAll(".arity-handle").forEach((node) => {
+    const handle = node as HTMLElement;
+    const hot = Boolean(hit && handle.dataset.block === hit.block.id && isArityBlock(hit.block));
+    handle.classList.toggle("hot", hot);
+  });
+}
+
+function startArityDrag(event: PointerEvent, block: Block): void {
+  event.stopPropagation();
+  event.preventDefault();
+  dragging = true;
+  selectedBlockId = block.id;
+  arityDrag = {
+    blockId: block.id,
+    startX: event.clientX,
+    startCount: arityCount(block),
+    kind: isFnSig(block) ? "params" : "args",
+  };
+  clearHover();
+  const move = (ev: PointerEvent) => {
+    if (!arityDrag || !program) {
+      return;
+    }
+    const current = findInProgram(program, arityDrag.blockId);
+    if (!current) {
+      return;
+    }
+    const delta = Math.round((ev.clientX - arityDrag.startX) / (SLOT_PX * zoom));
+    const target = arityDrag.startCount + delta;
+    const before = arityCount(current);
+    setArity(current, target);
+    if (arityCount(current) !== before) {
+      renderScripts();
+      updateMutator();
+    }
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    dragging = false;
+    arityDrag = undefined;
+    commit();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
 }
 
 function publishSelection(): void {
