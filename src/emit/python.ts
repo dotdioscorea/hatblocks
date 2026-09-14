@@ -7,7 +7,8 @@ export function emitPython(program: Program): string {
     for (const script of sprite.scripts) {
       const hat = script.root;
       if (hat.opcode === "events.flag") {
-        parts.push(emitChain(hat.next, 0).join("\n"));
+        const body = emitChain(hat.next, 1);
+        parts.push(`if __name__ == "__main__":\n${body.length ? body.join("\n") : "    pass"}`);
         continue;
       }
       if (hat.opcode === "custom.define") {

@@ -21,8 +21,10 @@ class PyLowerer {
   ) {}
 
   lowerModule(root: Node): Program {
-    const top: Block[] = [];
+    const imports: Block[] = [];
+    const toplevel: Block[] = [];
     const scripts: Script[] = [];
+    let mainHat: Block | undefined;
     for (const child of named(root)) {
       if (this.truncated) {
         break;
@@ -30,7 +32,7 @@ class PyLowerer {
       if (child.type === "import_statement" || child.type === "import_from_statement" || child.type === "future_import_statement") {
         const b = this.lowerStmt(child);
         if (b) {
-          top.push(b);
+          imports.push(b);
         }
         continue;
       }
@@ -41,9 +43,15 @@ class PyLowerer {
         }
         continue;
       }
+      if (child.type === "if_statement" && isDunderMain(child)) {
+        const hat = pyPrototype("events.flag", this.id, { source: spanOf(child) });
+        hat.next = this.lowerBlock(child.childForFieldName("consequence"));
+        mainHat = hat;
+        continue;
+      }
       const b = this.lowerStmt(child);
       if (b) {
-        top.push(b);
+        toplevel.push(b);
       }
     }
     const placed: Script[] = [];
@@ -52,13 +60,23 @@ class PyLowerer {
       placed.push({ id: this.id(), x: 12, y, root: rootBlock });
       y += 28;
     };
-    if (top.length) {
-      const hat = pyPrototype("events.flag", this.id, { source: spanOf(root) });
-      hat.next = chain(top);
-      place(hat);
+    if (imports.length) {
+      const head = chain(imports);
+      if (head) {
+        place(head);
+      }
     }
     for (const s of scripts) {
       place(s.root);
+    }
+    if (toplevel.length) {
+      const head = chain(toplevel);
+      if (head) {
+        place(head);
+      }
+    }
+    if (mainHat) {
+      place(mainHat);
     }
     let blocks = 0;
     for (const s of placed) {
@@ -422,6 +440,12 @@ function collapse(text: string): string {
 
 function unquote(text: string): string {
   return text.replace(/^['"]/, "").replace(/['"]$/, "");
+}
+
+function isDunderMain(node: Node): boolean {
+  const cond = node.childForFieldName("condition");
+  const text = cond?.text ?? "";
+  return text.includes("__name__") && text.includes("__main__");
 }
 
 function paramOf(node: Node): { type: string; name: string } | undefined {
