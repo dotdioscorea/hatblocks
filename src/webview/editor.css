@@ -107,16 +107,8 @@ html, body {
 .gap-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 .gap-btn:disabled { opacity: 0.35; cursor: default; }
 
-g.hb-glow-hover {
-  filter:
-    drop-shadow(0 0 1px #ffe566)
-    drop-shadow(0 0 4px #ffe566)
-    drop-shadow(0 0 8px rgba(255, 229, 102, 0.7));
-}
-g.hb-glow-select {
-  filter:
-    drop-shadow(0 0 1px var(--vscode-focusBorder, #4daafc))
-    drop-shadow(0 0 5px var(--vscode-focusBorder, #4daafc));
+g.hb-union-glow {
+  pointer-events: none;
 }
 
 .snap-guide {

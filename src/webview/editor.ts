@@ -10,7 +10,7 @@ import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor, InspectorMutation } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
 import { hitMark, marksFromSvg, type Mark } from "./layout";
-import { clearHoverGlows, paintHover, paintSelect } from "./highlight";
+import { clearAllGlows, clearHoverGlows, paintHover, paintSelect } from "./highlight";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
@@ -162,12 +162,20 @@ stageWrap.addEventListener("pointerdown", (event) => {
   stageWrap.setPointerCapture(event.pointerId);
 });
 stageWrap.addEventListener("pointermove", (event) => {
-  if (!panning) {
+  if (panning) {
+    panX = panning.x + (event.clientX - panning.px);
+    panY = panning.y + (event.clientY - panning.py);
+    applyPan();
     return;
   }
-  panX = panning.x + (event.clientX - panning.px);
-  panY = panning.y + (event.clientY - panning.py);
-  applyPan();
+  if (!dragging && !(event.target as HTMLElement).closest(".script")) {
+    clearHover();
+  }
+});
+stageWrap.addEventListener("pointerleave", () => {
+  if (!dragging) {
+    clearHover();
+  }
 });
 stageWrap.addEventListener("pointerup", () => {
   panning = undefined;
@@ -481,6 +489,20 @@ function clearHover(_scriptId?: string): void {
   clearHoverGlows(world);
 }
 
+function paintSelection(): void {
+  clearAllGlows(world);
+  if (!program || !selectedBlockId) {
+    return;
+  }
+  for (const script of program.sprites[0].scripts) {
+    const mark = marksForScript(script).find((m) => m.block.id === selectedBlockId);
+    if (mark) {
+      paintSelect(scriptSvg(script.id), mark);
+      return;
+    }
+  }
+}
+
 function hoverScript(scriptId: string, event: PointerEvent): void {
   const script = findScript(scriptId);
   if (!script) {
@@ -500,17 +522,6 @@ function hoverScript(scriptId: string, event: PointerEvent): void {
   }
   hoverKey = key;
   paintHover(svg, hit, marks);
-}
-
-function paintSelection(): void {
-  if (!program) {
-    return;
-  }
-  for (const script of program.sprites[0].scripts) {
-    const svg = scriptSvg(script.id);
-    const mark = selectedBlockId ? marksForScript(script).find((m) => m.block.id === selectedBlockId) : undefined;
-    paintSelect(svg, mark?.block.id === selectedBlockId ? mark : undefined);
-  }
 }
 
 function mutateSelected(delta: number): void {
@@ -636,6 +647,9 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
     if (dist < 8) {
       return;
     }
+    if (!moved) {
+      clearAllGlows(world);
+    }
     moved = true;
     if (!split && origin !== script.root) {
       unlink(script.root, origin);
@@ -670,6 +684,7 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
     const snap = findMouthSnap(dragScript);
     hideSnap();
     if (!moved) {
+      paintSelection();
       return;
     }
     if (isReporterish(dragScript.root)) {
