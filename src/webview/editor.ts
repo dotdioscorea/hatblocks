@@ -291,7 +291,7 @@ function renderGutter(): void {
       n.textContent = String(mark.line);
       n.title = `Line ${mark.line}`;
       n.style.top = `${panY + (script.y + mark.y) * zoom}px`;
-      n.style.height = `${Math.max(14, mark.h * zoom)}px`;
+      n.style.height = `${Math.max(12, (mark.headerH || Math.min(mark.h, 36)) * zoom)}px`;
       n.style.paddingTop = `${Math.max(0, 2 * zoom)}px`;
       gutter.appendChild(n);
     }

@@ -4,6 +4,8 @@ export interface Mark {
   block: Block;
   y: number;
   h: number;
+  /** Height of the header row only — line numbers sit here, not over the mouth. */
+  headerH: number;
   /** Height of this block plus the `next` chain that would tear off with it. */
   chainH: number;
   line?: number;
@@ -19,11 +21,12 @@ const EMPTY_MOUTH = 28;
 
 export function layoutMarks(block: Block | undefined, y = 0, marks: Mark[] = []): { marks: Mark[]; height: number } {
   const startIndex = marks.length;
-  const chainStart = y;
   let cursor = y;
   while (block) {
     const start = cursor;
+    let headerH = STACK;
     if (block.shape === "c" || block.shape === "c2") {
+      headerH = C_HEAD;
       cursor += C_HEAD;
       const body = layoutMarks(block.branches.body, cursor);
       marks.push(...body.marks);
@@ -36,12 +39,14 @@ export function layoutMarks(block: Block | undefined, y = 0, marks: Mark[] = [])
       }
       cursor += C_FOOT;
     } else {
-      cursor += block.shape === "hat" ? HAT : STACK;
+      headerH = block.shape === "hat" ? HAT : STACK;
+      cursor += headerH;
     }
     marks.push({
       block,
       y: start,
       h: cursor - start,
+      headerH,
       chainH: 0,
       line: block.source ? block.source.start.line + 1 : undefined,
     });
@@ -53,10 +58,6 @@ export function layoutMarks(block: Block | undefined, y = 0, marks: Mark[] = [])
       mark.chainH = cursor - mark.y;
     }
   }
-  // chainH for nested marks was filled by the recursive call. Recompute only
-  // for this chain's own blocks (those whose y >= chainStart and that belong
-  // to this while-loop). Nested marks already have chainH from their call.
-  void chainStart;
   return { marks, height: cursor };
 }
 
@@ -77,7 +78,13 @@ export function scaleMarks(marks: Mark[], layoutHeight: number, svgHeight: numbe
     return marks;
   }
   const s = svgHeight / layoutHeight;
-  return marks.map((m) => ({ ...m, y: m.y * s, h: m.h * s, chainH: m.chainH * s }));
+  return marks.map((m) => ({
+    ...m,
+    y: m.y * s,
+    h: m.h * s,
+    headerH: m.headerH * s,
+    chainH: m.chainH * s,
+  }));
 }
 
 function translateXY(el: Element): { x: number; y: number } {
@@ -97,6 +104,7 @@ function isCommentGroup(g: Element): boolean {
   return Boolean(g.querySelector(".sb3-comment"));
 }
 
+/** Scratch 3 mouths are translated to x=16 inside the parent block. */
 function innerScripts(blockG: Element): SVGGElement[] {
   return groupChildren(blockG).filter((g) => {
     if (isCommentGroup(g)) {
@@ -137,24 +145,27 @@ function walkSvgScript(
         unscaledH = 48;
       }
     }
-    const h = Math.max(12, unscaledH * scale);
+    const mouths = block.shape === "c" || block.shape === "c2" ? innerScripts(g) : [];
+    const mouthY = mouths[0] ? translateXY(mouths[0]).y : 0;
+    const headerH = Math.max(12, (mouthY > 8 ? mouthY : unscaledH) * scale);
+    const h = Math.max(headerH, unscaledH * scale);
     const mark: Mark = {
       block,
       y,
       h,
+      headerH,
       chainH: h,
       line: block.source ? block.source.start.line + 1 : undefined,
     };
     marks.push(mark);
     chain.push({ block, y, h, mark });
-    if (block.shape === "c" || block.shape === "c2") {
-      const mouths = innerScripts(g);
-      if (block.branches.body && mouths[0]) {
-        walkSvgScript(block.branches.body, mouths[0], offsetY + ty, scale, marks);
-      }
-      if (block.shape === "c2" && block.branches.else && mouths[1]) {
-        walkSvgScript(block.branches.else, mouths[1], offsetY + ty, scale, marks);
-      }
+    if (block.branches.body && mouths[0]) {
+      const innerY = translateXY(mouths[0]).y;
+      walkSvgScript(block.branches.body, mouths[0], offsetY + ty + innerY, scale, marks);
+    }
+    if (block.shape === "c2" && block.branches.else && mouths[1]) {
+      const innerY = translateXY(mouths[1]).y;
+      walkSvgScript(block.branches.else, mouths[1], offsetY + ty + innerY, scale, marks);
     }
     block = block.next;
   }
