@@ -76,8 +76,7 @@ export class HatblocksEditorProvider implements vscode.CustomTextEditorProvider 
             edit.replace(document.uri, full, text);
             await vscode.workspace.applyEdit(edit);
             applying = false;
-            this.hub.setProgram(document.uri, msg.program);
-            this.hub.refreshToolbox(msg.program, true, document.fileName);
+            await sendProgram();
             break;
           }
           case "run":

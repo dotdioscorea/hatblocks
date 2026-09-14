@@ -5,7 +5,7 @@ import { createIdFactory, recomputeStats } from "../ir/ids";
 import { isLiteral, litEmpty } from "../ir/builders";
 import { rebuildHat, rebuildCall, rebuildForRange, rebuildLambda } from "../library/hats";
 import { CATALOG_BY_OPCODE, prototypeFromDef } from "../library/catalog";
-import { findBlock, findInProgram, insertAfter, prependBranch, unlink } from "../ir/tree";
+import { findBlock, findInProgram, unlink } from "../ir/tree";
 import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor, InspectorMutation } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
@@ -14,7 +14,8 @@ import { clearHoverGlows, paintHover, paintSelect } from "./highlight";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
-const SNAP = 28;
+const COLUMN_X = 12;
+const GAP = 18;
 
 let program: Program | undefined;
 let selectedId: string | undefined;
@@ -26,6 +27,15 @@ let libraryProto: Block | undefined;
 let dragging = false;
 let hoverKey = "";
 const marksCache = new WeakMap<SVGElement, Mark[]>();
+let dropKey = "";
+let mouthPreview: {
+  host: Block;
+  slot: string;
+  after?: Block;
+  inserted: Block;
+  tail: Block;
+  savedTailNext: Block | undefined;
+} | undefined;
 
 const app = document.createElement("div");
 app.id = "app";
@@ -213,23 +223,37 @@ function renderAll(): void {
   applyPan();
 }
 
-function packVertically(): void {
+function packColumn(): void {
   if (!program) {
     return;
   }
   let y = 12;
-  const scripts = [...program.sprites[0].scripts].sort((a, b) => {
-    const la = a.root.source?.start.line ?? 1e9;
-    const lb = b.root.source?.start.line ?? 1e9;
-    return la - lb;
-  });
-  program.sprites[0].scripts = scripts;
-  for (const script of scripts) {
-    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
-    script.x = 12;
+  for (const script of program.sprites[0].scripts) {
+    script.x = COLUMN_X;
     script.y = y;
-    y += (el?.offsetHeight ?? 72) + 18;
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    y += (el?.offsetHeight ?? 72) + GAP;
   }
+}
+
+function packVertically(): void {
+  packColumn();
+}
+
+function applyColumnPositions(): void {
+  if (!program) {
+    return;
+  }
+  packColumn();
+  for (const script of program.sprites[0].scripts) {
+    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    if (!el) {
+      continue;
+    }
+    el.style.left = `${script.x}px`;
+    el.style.top = `${script.y}px`;
+  }
+  renderGutter();
 }
 
 function renderScripts(): void {
@@ -514,71 +538,67 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
 
   let dragScript = script;
   let split = false;
-  const startX = script.x;
-  const startY = script.y;
   const px = event.clientX;
   const py = event.clientY;
   dragging = true;
+  dropKey = "";
+  mouthPreview = undefined;
   clearHover();
 
   const move = (ev: PointerEvent) => {
     const dist = Math.hypot(ev.clientX - px, ev.clientY - py);
-    if (!split && dist > 8 && origin !== script.root) {
+    if (dist < 8) {
+      return;
+    }
+    if (!split && origin !== script.root) {
       unlink(script.root, origin);
-      const placed = clientToWorld(ev.clientX, ev.clientY);
-      dragScript = { id: createIdFactory("s")(), x: placed.x, y: placed.y, root: origin };
+      dragScript = { id: createIdFactory("s")(), x: COLUMN_X, y: script.y, root: origin };
       program!.sprites[0].scripts.push(dragScript);
       selectedId = dragScript.id;
       selectedBlockId = origin.id;
       split = true;
-      renderScripts();
-      updateMutator();
     }
-    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
-    if (!el) {
-      return;
-    }
-    el.classList.add("dragging");
-    if (split) {
-      const pt = clientToWorld(ev.clientX, ev.clientY);
+    const pt = clientToWorld(ev.clientX, ev.clientY);
+    if (isReporterish(dragScript.root)) {
       dragScript.x = pt.x;
       dragScript.y = pt.y;
-    } else {
-      dragScript.x = startX + (ev.clientX - px) / zoom;
-      dragScript.y = startY + (ev.clientY - py) / zoom;
+      const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
+      if (el) {
+        el.style.left = `${dragScript.x}px`;
+        el.style.top = `${dragScript.y}px`;
+      }
+      return;
     }
-    const snap = findSnap(dragScript);
-    if (snap && !isReporterish(dragScript.root)) {
-      dragScript.x = snap.x;
-      dragScript.y = snap.y;
+    const target = findDrop(pt, dragScript);
+    const key = target ? dropTargetKey(target) : "free";
+    if (key === dropKey) {
+      return;
     }
-    el.style.left = `${dragScript.x}px`;
-    el.style.top = `${dragScript.y}px`;
-    showSnap(dragScript);
+    dropKey = key;
+    applyDropPreview(dragScript, target);
   };
   const up = (ev: PointerEvent) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     dragging = false;
-    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
-    el?.classList.remove("dragging");
-    const snap = findSnap(dragScript);
     hideSnap();
+    const pt = clientToWorld(ev.clientX, ev.clientY);
     if (isReporterish(dragScript.root)) {
-      const over = scriptAt({ x: dragScript.x + 10, y: dragScript.y + 10 }, dragScript.id);
+      const over = scriptAt(pt, dragScript.id);
       if (over && plugInto(over, dragScript.root, ev)) {
         program!.sprites[0].scripts = program!.sprites[0].scripts.filter((s) => s.id !== dragScript.id);
+        mouthPreview = undefined;
+        dropKey = "";
         commit();
         return;
       }
     }
-    if (snap && !isReporterish(dragScript.root)) {
-      snap.apply(dragScript);
-    } else if (split) {
+    const didDrag = dropKey !== "";
+    mouthPreview = undefined;
+    dropKey = "";
+    if (didDrag) {
+      packColumn();
       commit();
-    } else {
-      renderScripts();
-      applyPan();
     }
   };
   window.addEventListener("pointermove", move);
@@ -667,14 +687,11 @@ function insertBlockAt(proto: Block, x: number, y: number): void {
     }
     void fake;
   }
-  const target = findSnap(dummy);
-  if (target && root.shape !== "hat" && !isReporterish(root)) {
-    dummy.root = root;
-    target.apply(dummy);
-    return;
-  }
-  program.sprites[0].scripts.push({ id: createIdFactory("s")(), x, y, root });
-  selectedId = program.sprites[0].scripts.at(-1)!.id;
+  dummy.id = createIdFactory("s")();
+  dummy.x = COLUMN_X;
+  program.sprites[0].scripts.push(dummy);
+  applyDropPreview(dummy, findDrop({ x, y }, dummy));
+  selectedId = dummy.id;
   selectedBlockId = root.id;
   commit();
 }
@@ -724,140 +741,133 @@ function chainHas(block: Block, opcode: string): boolean {
   return false;
 }
 
-interface Snap {
-  x: number;
-  y: number;
-  w: number;
-  apply: (dragged: Script) => void;
+type DropTarget =
+  | { kind: "between"; index: number }
+  | { kind: "mouth"; host: Block; slot: string; after?: Block };
+
+function dropTargetKey(target: DropTarget): string {
+  if (target.kind === "between") {
+    return `between:${target.index}`;
+  }
+  return `mouth:${target.host.id}:${target.slot}:${target.after?.id ?? "head"}`;
 }
 
-function takeDragged(dragged: Script): Block | undefined {
+function restoreMouthPreview(): void {
+  if (!mouthPreview) {
+    return;
+  }
+  const { host, slot, after, inserted, tail, savedTailNext } = mouthPreview;
+  if (!after) {
+    host.branches[slot] = tail.next;
+  } else if (after.next === inserted) {
+    after.next = tail.next;
+  }
+  tail.next = savedTailNext;
+  mouthPreview = undefined;
+}
+
+function ensureDragScript(drag: Script): void {
   if (!program) {
-    return undefined;
+    return;
   }
-  program.sprites[0].scripts = program.sprites[0].scripts.filter((s) => s.id !== dragged.id);
-  return dragged.root;
+  if (!program.sprites[0].scripts.some((s) => s.id === drag.id)) {
+    program.sprites[0].scripts.push(drag);
+  }
 }
 
-function findSnap(moving: Script): Snap | undefined {
-  if (!program || moving.root.shape === "hat" || isReporterish(moving.root)) {
+function applyDropPreview(drag: Script, target: DropTarget | undefined): void {
+  if (!program) {
+    return;
+  }
+  restoreMouthPreview();
+  ensureDragScript(drag);
+  if (!target || target.kind === "between") {
+    const list = program.sprites[0].scripts.filter((s) => s.id !== drag.id);
+    const index = target?.kind === "between" ? target.index : list.length;
+    list.splice(Math.max(0, Math.min(index, list.length)), 0, drag);
+    program.sprites[0].scripts = list;
+    drag.x = COLUMN_X;
+    if (world.querySelector(`.script[data-id="${drag.id}"]`)) {
+      applyColumnPositions();
+    } else {
+      packColumn();
+      renderScripts();
+    }
+    return;
+  }
+  program.sprites[0].scripts = program.sprites[0].scripts.filter((s) => s.id !== drag.id);
+  const tail = lastBlock(drag.root);
+  const savedTailNext = tail.next;
+  if (!target.after) {
+    tail.next = target.host.branches[target.slot];
+    target.host.branches[target.slot] = drag.root;
+  } else {
+    tail.next = target.after.next;
+    target.after.next = drag.root;
+  }
+  mouthPreview = {
+    host: target.host,
+    slot: target.slot,
+    after: target.after,
+    inserted: drag.root,
+    tail,
+    savedTailNext,
+  };
+  packColumn();
+  renderScripts();
+}
+
+function findDrop(worldPt: { x: number; y: number }, drag: Script): DropTarget | undefined {
+  if (!program || drag.root.shape === "hat" || isReporterish(drag.root)) {
     return undefined;
   }
-  const movingEl = world.querySelector(`.script[data-id="${moving.id}"]`) as HTMLElement | null;
-  const mw = movingEl?.offsetWidth ?? 160;
-  let best: { snap: Snap; dist: number } | undefined;
-  const consider = (dist: number, snap: Snap): void => {
-    if (dist > SNAP * 1.35) {
-      return;
-    }
-    if (!best || dist < best.dist) {
-      best = { snap, dist };
-    }
-  };
-
-  for (const other of program.sprites[0].scripts) {
-    if (other.id === moving.id) {
+  const scripts = program.sprites[0].scripts;
+  for (const other of scripts) {
+    if (other.id === drag.id) {
       continue;
     }
     const marks = marksForScript(other);
-    const indent = 16 * SCALE;
     for (const mark of marks) {
       if (mark.block.shape !== "c" && mark.block.shape !== "c2") {
         continue;
       }
-      if (findBlock(moving.root, mark.block.id)) {
+      if (findBlock(drag.root, mark.block.id)) {
         continue;
       }
-      const host = mark.block;
-      const mouthX = other.x + indent;
-      const slots: Array<{ slot: string; top: number }> = [{ slot: "body", top: other.y + mark.y + mark.headerH }];
-      if (mark.block.shape === "c2") {
-        const bodyH = mark.h - mark.headerH - 48 * SCALE;
-        slots.push({ slot: "else", top: other.y + mark.y + mark.headerH + Math.max(24, bodyH * 0.45) });
+      const relY = worldPt.y - other.y;
+      const relX = worldPt.x - other.x;
+      if (relY < mark.y - 8 || relY > mark.y + mark.h + 12 || relX < -24 || relX > Math.max(280, mark.h)) {
+        continue;
       }
-      for (const { slot, top } of slots) {
-        const w = Math.max(72, mw * 0.7);
-        consider(Math.hypot(moving.x - mouthX, moving.y - top), {
-          x: mouthX,
-          y: top - 4,
-          w,
-          apply: (dragged) => {
-            const root = takeDragged(dragged);
-            if (!root) {
-              return;
-            }
-            prependBranch(host, slot, root);
-            commit();
-          },
-        });
-        let inner: Block | undefined = host.branches[slot];
-        while (inner) {
-          const im = marks.find((m) => m.block.id === inner!.id);
-          if (im && inner.shape !== "cap") {
-            const ay = other.y + im.y + im.h - 6;
-            const block = inner;
-            consider(Math.hypot(moving.x - mouthX, moving.y - ay), {
-              x: mouthX,
-              y: ay,
-              w,
-              apply: (dragged) => {
-                const root = takeDragged(dragged);
-                if (!root) {
-                  return;
-                }
-                insertAfter(block, root);
-                commit();
-              },
-            });
-          }
+      const slot = mark.block.shape === "c2" && relY > mark.y + mark.h * 0.55 ? "else" : "body";
+      let after: Block | undefined;
+      let inner: Block | undefined = mark.block.branches[slot];
+      while (inner) {
+        if (inner === drag.root || findBlock(drag.root, inner.id)) {
           inner = inner.next;
+          continue;
         }
+        const im = marks.find((m) => m.block.id === inner!.id);
+        if (im && relY > other.y + im.y + im.h / 2 - other.y) {
+          after = inner;
+        }
+        inner = inner.next;
       }
+      return { kind: "mouth", host: mark.block, slot, after };
     }
-    const last = lastBlock(other.root);
-    if (last.shape === "cap") {
-      continue;
-    }
-    const el = world.querySelector(`.script[data-id="${other.id}"]`) as HTMLElement | null;
-    if (!el) {
-      continue;
-    }
-    const bottomX = other.x;
-    const bottomY = other.y + el.offsetHeight - 4;
-    consider(Math.hypot(moving.x - bottomX, moving.y - bottomY), {
-      x: bottomX,
-      y: bottomY - 6,
-      w: Math.max(80, el.offsetWidth * 0.9),
-      apply: (dragged) => {
-        const root = takeDragged(dragged);
-        if (!root) {
-          return;
-        }
-        last.next = root;
-        commit();
-      },
-    });
   }
-  return best?.snap;
-}
-
-function showSnap(moving: Script): void {
-  const notch = document.getElementById("snapNotch") as SVGSVGElement | null;
-  const snap = findSnap(moving);
-  if (!snap || !notch || isReporterish(moving.root)) {
-    hideSnap();
-    return;
+  const others = scripts.filter((s) => s.id !== drag.id);
+  let index = others.length;
+  for (let i = 0; i < others.length; i++) {
+    const el = world.querySelector(`.script[data-id="${others[i].id}"]`) as HTMLElement | null;
+    const h = el?.offsetHeight ?? 72;
+    const mid = others[i].y + h / 2;
+    if (worldPt.y < mid) {
+      index = i;
+      break;
+    }
   }
-  const w = snap.w;
-  const x = panX + snap.x * zoom;
-  const y = panY + snap.y * zoom;
-  notch.setAttribute("width", String(w));
-  notch.setAttribute("height", "16");
-  notch.style.left = `${x}px`;
-  notch.style.top = `${y}px`;
-  notch.innerHTML = `<path d="M0 4 H12 C16 4 16 12 22 12 H36 C42 12 42 4 48 4 H${w}" fill="none" stroke="#fff04d" stroke-width="3" stroke-linecap="round"/>`;
-  notch.classList.add("show");
-  guide.classList.remove("show");
+  return { kind: "between", index };
 }
 
 function hideSnap(): void {
