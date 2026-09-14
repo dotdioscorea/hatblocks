@@ -317,8 +317,8 @@ function selectedRoot(): Block | undefined {
   return findInProgram(program, selectedBlockId);
 }
 
-function isHat(block: Block): boolean {
-  return block.opcode === "events.flag" || block.opcode === "custom.define";
+function isFnSig(block: Block): boolean {
+  return block.opcode === "events.flag" || block.opcode === "custom.define" || block.opcode === "c.fn" || block.opcode === "py.def";
 }
 
 function isCall(block: Block): boolean {
@@ -345,12 +345,12 @@ function updateMutator(): void {
   const bar = $("mutator");
   const label = $("mutatorLabel");
   const root = selectedRoot();
-  if (!root || (!isHat(root) && !isCall(root))) {
+  if (!root || (!isFnSig(root) && !isCall(root))) {
     bar.classList.remove("show");
     return;
   }
   bar.classList.add("show");
-  if (isHat(root)) {
+  if (isFnSig(root)) {
     const n = root.params?.length ?? 0;
     label.textContent = n === 1 ? "1 parameter" : `${n} parameters`;
   } else {
@@ -421,7 +421,7 @@ function mutateSelected(delta: number): void {
   applyMutation({
     id: root.id,
     extraArgsCount: isCall(root) ? Math.max(0, (root.extraArgs?.length ?? 0) + delta) : root.extraArgs?.length,
-    params: isHat(root)
+    params: isFnSig(root)
       ? delta > 0
         ? [...(root.params ?? []), { type: "int", name: `arg${(root.params?.length ?? 0) + 1}` }]
         : (root.params ?? []).slice(0, -1)
@@ -489,7 +489,7 @@ function applyMutation(m: InspectorMutation): void {
       block.extraArgs.pop();
     }
   }
-  if (isHat(block)) {
+  if (isFnSig(block)) {
     rebuildHat(block);
   }
   if (isCall(block)) {
@@ -825,7 +825,7 @@ function editScript(scriptId: string): void {
       return;
     }
     field.block.fields[field.key] = next;
-    if (field.block.opcode === "events.flag" || field.block.opcode === "custom.define") {
+    if (isFnSig(field.block)) {
       rebuildHat(field.block);
     }
     if (isCall(field.block)) {

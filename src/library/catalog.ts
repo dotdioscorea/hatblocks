@@ -50,14 +50,25 @@ export const CATALOG: OpcodeDef[] = [
   { opcode: "type.scope", shape: "reporter", category: "motion", line: "{left} : : {right} :: motion", valueSlots: ["left", "right"] },
 
   // Functions
-  { opcode: "events.flag", shape: "hat", category: "custom", line: "{ret} main :: events hat", valueSlots: ["ret"] },
+  {
+    opcode: "events.flag",
+    shape: "c",
+    category: "custom",
+    line: "{ret} main {",
+    fields: { name: "main", returnType: "int" },
+    valueSlots: ["ret"],
+    branchSlots: ["body"],
+    closer: "} :: events",
+  },
   {
     opcode: "custom.define",
-    shape: "hat",
+    shape: "c",
     category: "custom",
-    line: "{ret} fn :: custom hat",
+    line: "{ret} fn {",
     fields: { name: "fn", returnType: "void" },
     valueSlots: ["ret"],
+    branchSlots: ["body"],
+    closer: "} :: custom",
   },
   { opcode: "custom.call", shape: "stack", category: "custom", line: "{name} :: custom", fields: { name: "f" } },
   { opcode: "custom.reporter", shape: "reporter", category: "custom", line: "{name} :: custom", fields: { name: "f" } },
@@ -75,6 +86,17 @@ export const CATALOG: OpcodeDef[] = [
     branchSlots: ["body"],
     closer: "} :: custom",
   },
+  {
+    opcode: "c.fn",
+    shape: "c",
+    category: "custom",
+    line: "{ret} fn {",
+    fields: { name: "fn", returnType: "void" },
+    valueSlots: ["ret"],
+    branchSlots: ["body"],
+    closer: "} :: custom",
+  },
+  { opcode: "cpp.access", shape: "stack", category: "custom", line: "{name} : :: custom", fields: { name: "public" } },
 
   // Control
   {

@@ -39,21 +39,25 @@ export function emitC(program: Program): string {
   for (const sprite of program.sprites) {
     for (const script of sprite.scripts) {
       const hat = script.root;
-      if (hat.opcode === "events.flag") {
-        const ret = typeExpr(hat.values.ret, needed) || hat.fields.returnType || "int";
-        const plist = paramListOf(hat, needed);
-        mainFn = emitFunction(hat.fields.name || "main", hat.params?.map((p) => p.name) ?? [], hat.next, {
-          needed,
-          isMain: true,
-          returnType: ret,
-          paramList: plist || "void",
-        });
-      } else if (hat.opcode === "custom.define") {
-        functions.push(emitDefined(hat, needed));
-      } else if (hat.opcode === "control.label") {
-        functions.push(emitFunction(sanitizeIdent(hat.fields.label || "label"), [], hat.next, { needed, isMain: false, returnType: "void" }));
-      } else if (hat.opcode === "cpp.class") {
-        functions.push(emitStatement(hat, needed, false, 0).join("\n"));
+      let current: Block | undefined = hat;
+      while (current) {
+        if (current.opcode === "events.flag") {
+          const ret = typeExpr(current.values.ret, needed) || current.fields.returnType || "int";
+          const plist = paramListOf(current, needed);
+          mainFn = emitFunction(current.fields.name || "main", current.params?.map((p) => p.name) ?? [], fnBody(current), {
+            needed,
+            isMain: true,
+            returnType: ret,
+            paramList: plist || "void",
+          });
+        } else if (current.opcode === "custom.define" || current.opcode === "c.fn") {
+          functions.push(emitDefined(current, needed));
+        } else if (current.opcode === "control.label") {
+          functions.push(emitFunction(sanitizeIdent(current.fields.label || "label"), [], fnBody(current), { needed, isMain: false, returnType: "void" }));
+        } else if (current.opcode === "cpp.class" || current.opcode === "cpp.namespace") {
+          functions.push(emitStatement(current, needed, false, 0).join("\n"));
+        }
+        current = current.next;
       }
     }
   }
@@ -84,7 +88,14 @@ function harvestTopLevel(
   root: Block,
   into: { includes: string[]; macros: string[]; globals: string[]; functions: string[]; needed: Set<string>; isMain: boolean },
 ): void {
-  if (root.opcode === "events.flag" || root.opcode === "custom.define" || root.opcode === "control.label" || root.opcode === "cpp.class") {
+  if (
+    root.opcode === "events.flag" ||
+    root.opcode === "custom.define" ||
+    root.opcode === "c.fn" ||
+    root.opcode === "control.label" ||
+    root.opcode === "cpp.class" ||
+    root.opcode === "cpp.namespace"
+  ) {
     return;
   }
   let current: Block | undefined = root;
@@ -110,13 +121,17 @@ function harvestTopLevel(
   }
 }
 
+function fnBody(block: Block): Block | undefined {
+  return block.branches.body ?? block.next;
+}
+
 function emitDefined(hat: Block, needed: Set<string>): string {
   const parsed = parseDefine(hat);
-  const returnType = typeExpr(hat.values.ret, needed) || hat.fields.returnType || (chainHas(hat.next, "control.report") ? "int" : "void");
+  const body = fnBody(hat);
+  const returnType = typeExpr(hat.values.ret, needed) || hat.fields.returnType || (chainHas(body, "control.report") ? "int" : "void");
   const plist = paramListOf(hat, needed) || parsed.params.map((p) => `${guessType(p)} ${p}`).join(", ");
   const name = hat.fields.name || parsed.name;
-  const qual = hat.fields.parentClass ? `${sanitizeIdent(hat.fields.parentClass)}::${sanitizeIdent(name)}` : name;
-  return emitFunction(qual, hat.params?.map((p) => p.name) ?? parsed.params, hat.next, {
+  return emitFunction(name, hat.params?.map((p) => p.name) ?? parsed.params, body, {
     needed,
     isMain: false,
     returnType,
@@ -200,10 +215,22 @@ function emitStatement(block: Block, needed: Set<string>, isMain: boolean, inden
       ];
     case "c.include":
     case "c.defineMacro":
-    case "events.flag":
-    case "custom.define":
     case "events.loaded":
       return [];
+    case "events.flag":
+    case "custom.define":
+    case "c.fn": {
+      const ret = typeExpr(block.values.ret, needed) || block.fields.returnType || "void";
+      const name = block.fields.name || "fn";
+      const plist = paramListOf(block, needed) || "void";
+      return [
+        `${pad}${ret} ${name}(${plist}) {`,
+        ...emitChain(fnBody(block), needed, isMain, indent + 1),
+        `${pad}}`,
+      ];
+    }
+    case "cpp.access":
+      return [`${pad}${block.fields.name || "public"}:`];
     case "looks.say":
     case "looks.think":
       needed.add("stdio.h");

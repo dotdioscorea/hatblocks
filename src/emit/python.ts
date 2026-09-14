@@ -4,40 +4,12 @@ import type { Block, Literal, Program } from "../ir/types";
 export function emitPython(program: Program): string {
   const scripts = program.sprites.flatMap((s) => s.scripts);
   const parts: string[] = [];
-  const emitted = new Set<string>();
-
-  const emitDef = (hat: Block, indent: number): string => {
-    const name = hat.fields.name || "fn";
-    const params = (hat.params ?? []).map((p) => (p.type ? `${p.name}: ${p.type}` : p.name)).join(", ");
-    const ret = hat.fields.returnType && hat.fields.returnType !== "None" ? ` -> ${hat.fields.returnType}` : "";
-    const pad = "    ".repeat(indent);
-    const body = emitChain(hat.next, indent + 1);
-    return `${pad}def ${name}(${params})${ret}:\n${body.length ? body.join("\n") : `${pad}    pass`}`;
-  };
 
   for (const script of scripts) {
-    const hat = script.root;
-    if (hat.opcode === "py.class") {
-      const name = hat.fields.name || "C";
-      const methods = scripts.filter((s) => s.root.opcode === "custom.define" && s.root.fields.parentClass === name);
-      const methodSrc = methods.map((m) => {
-        emitted.add(m.id);
-        return emitDef(m.root, 1);
-      });
-      parts.push(`class ${name}:\n${methodSrc.length ? methodSrc.join("\n\n") : "    pass"}`);
-      emitted.add(script.id);
+    const src = emitChain(script.root, 0).join("\n");
+    if (src.trim()) {
+      parts.push(src);
     }
-  }
-  for (const script of scripts) {
-    if (emitted.has(script.id)) {
-      continue;
-    }
-    const hat = script.root;
-    if (hat.opcode === "custom.define") {
-      parts.push(emitDef(hat, 0));
-      continue;
-    }
-    parts.push(emitChain(hat, 0).join("\n"));
   }
   return `${parts.filter((p) => p.trim()).join("\n\n")}\n`;
 }
@@ -54,6 +26,20 @@ function emitChain(head: Block | undefined, indent: number): string[] {
 
 function pad(indent: number): string {
   return "    ".repeat(indent);
+}
+
+function defLine(block: Block, indent: number): string[] {
+  const p = pad(indent);
+  const name = block.fields.name || "fn";
+  const params = (block.params ?? []).map((x, i) => {
+    const t = block.values[`t${i}`];
+    const ty = t ? expr(t) : x.type;
+    const n = block.fields[`p${i}`] || x.name;
+    return ty && ty !== "Any" && ty !== "None" ? `${n}: ${ty}` : n;
+  });
+  const retRaw = expr(block.values.ret) || block.fields.returnType || "";
+  const ret = retRaw && retRaw !== "None" ? ` -> ${retRaw}` : "";
+  return [`${p}def ${name}(${params.join(", ")})${ret}:`, ...orPass(block.branches.body ?? block.next, indent + 1)];
 }
 
 function emitStmt(block: Block, indent: number): string[] {
@@ -96,11 +82,9 @@ function emitStmt(block: Block, indent: number): string[] {
       return [`${p}try:`, ...orPass(block.branches.body, indent + 1), `${p}except Exception:`, ...orPass(block.branches.else, indent + 1)];
     case "py.class":
       return [`${p}class ${block.fields.name || "C"}:`, ...orPass(block.branches.body, indent + 1)];
-    case "custom.define": {
-      const name = block.fields.name || "fn";
-      const params = (block.params ?? []).map((x) => x.name).join(", ");
-      return [`${p}def ${name}(${params}):`, ...orPass(block.next, indent + 1)];
-    }
+    case "py.def":
+    case "custom.define":
+      return defLine(block, indent);
     case "control.report":
       return [`${p}return ${expr(block.values.value)}`];
     case "control.stop":

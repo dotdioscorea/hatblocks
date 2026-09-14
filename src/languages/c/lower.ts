@@ -3,7 +3,7 @@ import { makeBlock, litEmpty, litNumber, litString, isLiteral } from "../../ir/b
 import { chain, countBlocks, createIdFactory, type IdFactory } from "../../ir/ids";
 import type { Block, Diagnostic, Literal, Program, Script, SourceSpan } from "../../ir/types";
 import { CATALOG, defaultToolbox, groupToolbox } from "../../library/catalog";
-import { hatLine, rebuildHat } from "../../library/hats";
+import { rebuildCompoundDef } from "../../library/hats";
 import { headerName, stripCString } from "./builtins";
 
 const BINARY_OPS: Record<string, string> = {
@@ -84,14 +84,12 @@ class CLowerer {
         }
         case "class_specifier":
         case "struct_specifier":
-          for (const s of this.classScripts(child)) {
-            scripts.push(s);
-          }
+          scripts.push({ id: this.id(), x: 0, y: 0, root: this.classBlock(child) });
           break;
         case "namespace_definition": {
           const ns = this.lowerNamespace(child);
           if (ns) {
-            preamble.push(ns);
+            scripts.push({ id: this.id(), x: 0, y: 0, root: ns });
           }
           break;
         }
@@ -200,6 +198,14 @@ class CLowerer {
   }
 
   private functionScript(node: Node): Script | undefined {
+    const fn = this.functionBlock(node);
+    if (!fn) {
+      return undefined;
+    }
+    return { id: this.id(), x: 0, y: 0, root: fn };
+  }
+
+  private functionBlock(node: Node): Block | undefined {
     const declarator = node.childForFieldName("declarator");
     const body = node.childForFieldName("body");
     const typeNode = node.childForFieldName("type");
@@ -211,28 +217,19 @@ class CLowerer {
     const bodyHead = body ? this.lowerStatement(body) : undefined;
     const isMain = info.name === "main";
     const ret = collapse(typeNode?.text ?? "int");
-    const hat = isMain
-      ? this.block("events.flag", {
-          source: spanOf(node),
-          comment: "__main__",
-        })
-      : this.block("custom.define", {
-          source: spanOf(node),
-        });
-    hat.fields.name = info.name;
-    hat.fields.returnType = ret;
-    hat.params = info.params;
-    hat.line = hatLine(isMain ? "when" : "define", ret, info.name, info.params, hat.fields.parentClass);
-    hat.values.ret = this.typeNamed(ret);
-    info.params.forEach((p, i) => {
-      hat.values[`t${i}`] = this.typeNamed(p.type);
-      hat.fields[`p${i}`] = p.name;
+    const block = this.block(isMain ? "events.flag" : "custom.define", {
+      source: spanOf(node),
+      fields: { name: info.name, returnType: ret },
+      values: { ret: this.typeNamed(ret) },
+      branches: { body: bodyHead },
     });
-    if (isMain) {
-      hat.comment = "__main__";
-    }
-    hat.next = bodyHead;
-    return { id: this.id(), x: 0, y: 0, root: hat };
+    block.params = info.params;
+    info.params.forEach((p, i) => {
+      block.values[`t${i}`] = this.typeNamed(p.type);
+      block.fields[`p${i}`] = p.name;
+    });
+    rebuildCompoundDef(block);
+    return block;
   }
 
   private includeBlock(node: Node): Block {
@@ -988,58 +985,64 @@ class CLowerer {
     });
   }
 
-  private classScripts(node: Node): Script[] {
+  private classBlock(node: Node): Block {
     const name = node.childForFieldName("name")?.text ?? "T";
     const kind = node.type === "struct_specifier" ? "struct" : "class";
-    const bodyNode = node.childForFieldName("body");
-    const members: Block[] = [];
-    const methods: Script[] = [];
-    if (bodyNode) {
-      for (const child of named(bodyNode)) {
-        if (child.type === "access_specifier") {
-          continue;
-        }
-        if (child.type === "function_definition") {
-          const script = this.functionScript(child);
-          if (script) {
-            script.root.fields.parentClass = name;
-            rebuildHat(script.root);
-            methods.push(script);
-          }
-          continue;
-        }
-        if (child.type === "field_declaration" || child.type === "declaration") {
-          members.push(...this.declarationBlocks(child));
-        }
-      }
-    }
     const root = this.block("cpp.class", {
       fields: { name, kind },
-      branches: { body: chain(members) },
+      branches: { body: chain(this.scopeMembers(node.childForFieldName("body"))) },
       source: spanOf(node),
     });
     root.line = `${kind} ${name} {`;
-    return [{ id: this.id(), x: 0, y: 0, root }, ...methods];
+    return root;
   }
 
   private lowerNamespace(node: Node): Block | undefined {
     const name = node.childForFieldName("name")?.text ?? "ns";
-    const body = node.childForFieldName("body");
-    const parts: Block[] = [];
-    if (body) {
-      for (const child of named(body)) {
-        if (child.type === "declaration") {
-          parts.push(...this.declarationBlocks(child));
-        } else if (child.type === "using_declaration" || child.type === "using_directive") {
-          parts.push(this.lowerUsing(child));
-        }
-      }
-    }
     return this.block("cpp.namespace", {
       fields: { name },
-      branches: { body: chain(parts) },
+      branches: { body: chain(this.scopeMembers(node.childForFieldName("body"))) },
       source: spanOf(node),
     });
+  }
+
+  private scopeMembers(body: Node | null): Block[] {
+    const members: Block[] = [];
+    if (!body) {
+      return members;
+    }
+    for (const child of named(body)) {
+      if (child.type === "access_specifier") {
+        members.push(this.block("cpp.access", { fields: { name: collapse(child.text).replace(/:$/, "") }, source: spanOf(child) }));
+        continue;
+      }
+      if (child.type === "function_definition") {
+        const fn = this.functionBlock(child);
+        if (fn) {
+          members.push(fn);
+        }
+        continue;
+      }
+      if (child.type === "field_declaration" || child.type === "declaration") {
+        members.push(...this.declarationBlocks(child));
+        continue;
+      }
+      if (child.type === "class_specifier" || child.type === "struct_specifier") {
+        members.push(this.classBlock(child));
+        continue;
+      }
+      if (child.type === "namespace_definition") {
+        const ns = this.lowerNamespace(child);
+        if (ns) {
+          members.push(ns);
+        }
+        continue;
+      }
+      if (child.type === "using_declaration" || child.type === "using_directive" || child.type === "alias_declaration") {
+        members.push(this.lowerUsing(child));
+      }
+    }
+    return members;
   }
 
   private lowerUsing(node: Node): Block {

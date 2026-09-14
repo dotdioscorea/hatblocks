@@ -2,7 +2,7 @@ import type { Node } from "web-tree-sitter";
 import { makeBlock, litEmpty, litNumber, litString, isLiteral } from "../../ir/builders";
 import { chain, countBlocks, createIdFactory, type IdFactory } from "../../ir/ids";
 import type { Block, Diagnostic, Literal, Program, Script, SourceSpan } from "../../ir/types";
-import { hatLine } from "../../library/hats";
+import { rebuildCompoundDef } from "../../library/hats";
 import { pythonToolbox, pyPrototype } from "./catalog";
 
 export function lowerPython(root: Node, options: { fileName: string; maxBlocks: number }): Program {
@@ -43,7 +43,10 @@ class PyLowerer {
         continue;
       }
       if (child.type === "class_definition") {
-        scripts.push(...this.lowerClassScripts(child));
+        const s = this.asScript(this.lowerClass(child));
+        if (s) {
+          scripts.push(s);
+        }
         continue;
       }
       const b = this.lowerStmt(child);
@@ -218,49 +221,29 @@ class PyLowerer {
           .filter((p): p is { type: string; name: string } => Boolean(p))
       : [];
     const body = this.lowerBlock(node.childForFieldName("body"));
-    const hat = pyPrototype("custom.define", this.id, { source: spanOf(node) });
-    hat.fields.name = name;
-    hat.fields.returnType = ret || "None";
-    hat.params = params;
-    hat.line = hatLine("define", ret || "None", name, params);
-    hat.values.ret = pyPrototype("type.named", this.id, { fields: { name: ret || "None" } });
-    params.forEach((p, i) => {
-      hat.values[`t${i}`] = pyPrototype("type.named", this.id, { fields: { name: p.type || "Any" } });
-      hat.fields[`p${i}`] = p.name;
+    const block = pyPrototype("py.def", this.id, {
+      source: spanOf(node),
+      fields: { name, returnType: ret || "None" },
+      branches: { body },
     });
-    hat.next = body;
-    return hat;
+    block.params = params;
+    block.values.ret = pyPrototype("type.named", this.id, { fields: { name: ret || "None" } });
+    params.forEach((p, i) => {
+      block.values[`t${i}`] = pyPrototype("type.named", this.id, { fields: { name: p.type || "Any" } });
+      block.fields[`p${i}`] = p.name;
+    });
+    rebuildCompoundDef(block);
+    return block;
   }
 
   private lowerClass(node: Node): Block {
-    return this.lowerClassScripts(node)[0]?.root ?? pyPrototype("py.class", this.id, { fields: { name: "C" }, source: spanOf(node) });
-  }
-
-  private lowerClassScripts(node: Node): Script[] {
     const name = node.childForFieldName("name")?.text ?? "C";
-    const out: Script[] = [];
-    const header = pyPrototype("py.class", this.id, {
+    const body = this.lowerBlock(node.childForFieldName("body"));
+    return pyPrototype("py.class", this.id, {
       fields: { name },
+      branches: { body },
       source: spanOf(node),
     });
-    header.shape = "hat";
-    header.fields.name = name;
-    header.line = `class ${name} : :: custom hat`;
-    out.push({ id: this.id(), x: 0, y: 0, root: header });
-    const body = node.childForFieldName("body");
-    if (body) {
-      for (const child of named(body)) {
-        const stmt = child.type === "decorated_definition"
-          ? child.childForFieldName("definition") ?? child
-          : child;
-        if (stmt.type === "function_definition") {
-          const fn = this.lowerFunction(stmt);
-          fn.fields.parentClass = name;
-          out.push({ id: this.id(), x: 0, y: 0, root: fn });
-        }
-      }
-    }
-    return out;
   }
 
   private lowerIf(node: Node): Block {

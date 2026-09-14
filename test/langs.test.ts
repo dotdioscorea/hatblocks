@@ -11,15 +11,29 @@ import { emitC } from "../src/emit/c";
 const wasmDir = join(process.cwd(), "wasm");
 const examples = join(process.cwd(), "examples");
 
-test("python cls.py splits class, methods, and try into separate scripts", async () => {
+test("python cls.py nests methods in the class mouth; try is its own stack", async () => {
   const source = readFileSync(join(examples, "cls.py"), "utf8");
   const program = await pythonAdapter.parse(source, { fileName: "cls.py", wasmDir });
   const roots = program.sprites[0].scripts.map((s) => s.root.opcode);
   assert.ok(roots.includes("py.class"));
-  assert.ok(roots.filter((o) => o === "custom.define").length >= 2);
+  assert.ok(roots.includes("py.try"));
+  assert.equal(roots.filter((o) => o === "py.def" || o === "custom.define").length, 0);
+  const klass = program.sprites[0].scripts.find((s) => s.root.opcode === "py.class")!.root;
+  const methods: string[] = [];
+  let member = klass.branches.body;
+  while (member) {
+    if (member.opcode === "py.def") {
+      methods.push(member.fields.name);
+    }
+    member = member.next;
+  }
+  assert.ok(methods.includes("__init__"));
+  assert.ok(methods.includes("bump"));
   const code = emitProgram(program).map((s) => s.code).join("\n");
   assert.doesNotMatch(code, /when file/);
-  assert.match(code, /class Counter|Counter/);
+  assert.match(code, /class Counter/);
+  assert.match(code, /__init__/);
+  assert.match(code, /def /);
 });
 
 test("python hello.py lowers defs and print", async () => {
@@ -27,7 +41,8 @@ test("python hello.py lowers defs and print", async () => {
   const program = await pythonAdapter.parse(source, { fileName: "hello.py", wasmDir });
   const code = emitProgram(program).map((s) => s.code).join("\n");
   assert.ok(program.stats.scripts >= 1);
-  assert.match(code, /:: custom hat|greet/);
+  assert.match(code, /greet/);
+  assert.doesNotMatch(code, /:: custom hat/);
   assert.match(code, /print|__main__/);
   assert.doesNotMatch(code, /clicked/);
   const opcodes = collectOpcodes(program);

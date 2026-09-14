@@ -25,15 +25,12 @@ export function hatLine(
   _returnType: string,
   name: string,
   params: FnParam[] = [],
-  parentClass?: string,
+  _parentClass?: string,
 ): string {
-  const ident = parentClass
-    ? `${cleanIdent(parentClass)} : : ${cleanIdent(name)}`
-    : cleanIdent(name);
+  const ident = cleanIdent(name);
   const args = params.map((_, i) => `{t${i}} {p${i}}`).join(" , ");
-  const sig = args ? `{ret} ${ident} ( ${args} )` : `{ret} ${ident}`;
-  const shape = kind === "when" ? "events hat" : "custom hat";
-  return `${sig} :: ${shape}`;
+  const sig = args ? `{ret} ${ident} ( ${args} ) {` : `{ret} ${ident} {`;
+  return sig;
 }
 
 export function cleanType(type: string): string {
@@ -49,16 +46,36 @@ export function rebuildHat(block: {
   fields: Record<string, string>;
   params?: FnParam[];
   line: string;
+  closer?: string;
 }): void {
-  const name = block.fields.name || (block.opcode === "events.flag" ? "main" : "fn");
-  const ret = block.fields.returnType || "int";
-  const kind = block.opcode === "events.flag" ? "when" : "define";
-  block.line = hatLine(kind, ret, name, block.params ?? [], block.fields.parentClass);
-  block.fields.returnType = ret;
+  rebuildCompoundDef(block);
+}
+
+/** Function / method: a mouth so the body is inside the brick. */
+export function rebuildCompoundDef(block: {
+  opcode: string;
+  fields: Record<string, string>;
+  params?: FnParam[];
+  line: string;
+  closer?: string;
+}): void {
+  const name = cleanIdent(block.fields.name || "fn");
   block.fields.name = name;
-  (block.params ?? []).forEach((p, i) => {
+  const params = block.params ?? [];
+  params.forEach((p, i) => {
     block.fields[`p${i}`] = p.name;
   });
+  const args = params.map((_, i) => `{t${i}} {p${i}}`).join(" , ");
+  if (block.opcode === "py.def") {
+    block.line = args ? `def {ret} ${name} ( ${args} ) {` : `def {ret} ${name} {`;
+    block.closer = "} :: custom";
+  } else if (block.opcode === "events.flag") {
+    block.line = args ? `{ret} ${name} ( ${args} ) {` : `{ret} ${name} {`;
+    block.closer = "} :: events";
+  } else {
+    block.line = args ? `{ret} ${name} ( ${args} ) {` : `{ret} ${name} {`;
+    block.closer = "} :: custom";
+  }
 }
 
 export function rebuildCall(block: {

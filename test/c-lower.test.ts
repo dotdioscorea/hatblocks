@@ -24,7 +24,7 @@ test("hello.c is int main that prints hello and includes stdio", async () => {
   const program = await parseFile("hello.c");
   const code = allCode(program);
   assert.ok(program.stats.scripts >= 1);
-  assert.match(code, /:: events hat|int main/);
+  assert.match(code, /int main|:: events/);
   assert.match(code, /Hello, world!/);
   assert.match(code, /#include \[stdio\.h v\]/);
 });
@@ -47,13 +47,13 @@ test("memory.c maps malloc/free/NULL onto pointer blocks", async () => {
   assert.match(code, /NULL/i);
 });
 
-test("greet.c emits C function hats for helpers and main", async () => {
+test("greet.c emits C functions as mouth blocks for helpers and main", async () => {
   const program = await parseFile("greet.c");
   const code = allCode(program);
   assert.match(code, /greet/);
   assert.match(code, /add/);
-  assert.match(code, /:: events hat|:: custom hat/);
-  assert.doesNotMatch(code, /\bdefine\b/);
+  assert.match(code, /:: events|:: custom/);
+  assert.doesNotMatch(code, /:: events hat|:: custom hat/);
   assert.doesNotMatch(code, /clicked/);
 });
 

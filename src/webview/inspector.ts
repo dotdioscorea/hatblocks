@@ -40,8 +40,8 @@ function escapeAttr(text: string): string {
   return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
 }
 
-function isHat(block: Block): boolean {
-  return block.opcode === "events.flag" || block.opcode === "custom.define" || block.opcode === "py.class";
+function isFnSig(block: Block): boolean {
+  return block.opcode === "events.flag" || block.opcode === "custom.define" || block.opcode === "c.fn" || block.opcode === "py.def";
 }
 
 function isCall(block: Block): boolean {
@@ -125,7 +125,7 @@ function render(): void {
   }
 
   const typeSlots = ["ret", "type", "t0", "inner", "base", "arg", "targ", "module", "name"].filter(
-    (s) => s in block.values || (isHat(block) && s === "ret"),
+    (s) => s in block.values || (isFnSig(block) && s === "ret"),
   );
   for (const slot of Object.keys(block.values)) {
     if ((/^t\d+$/.test(slot) || slot === "module" || slot === "name") && !typeSlots.includes(slot)) {
@@ -139,7 +139,7 @@ function render(): void {
     }
   }
 
-  if (isHat(block) || block.opcode === "ops.lambda" || block.opcode === "ops.lambdaBlock") {
+  if (isFnSig(block) || block.opcode === "ops.lambda" || block.opcode === "ops.lambdaBlock") {
     bits.push(`<label>Parameters</label>`);
     for (const [i, p] of (block.params ?? []).entries()) {
       bits.push(
