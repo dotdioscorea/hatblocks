@@ -9,6 +9,8 @@ export interface Mark {
   /** Height of this block plus the `next` chain that would tear off with it. */
   chainH: number;
   line?: number;
+  /** SVG group for this brick, when marks came from the painted script. */
+  el?: SVGGElement;
 }
 
 /** Scratch 3 command first-line is 40 + padding 4+4. */
@@ -96,7 +98,7 @@ function translateXY(el: Element): { x: number; y: number } {
   return { x: Number(m[1]), y: Number(m[2] ?? 0) };
 }
 
-function groupChildren(el: Element): SVGGElement[] {
+export function groupChildren(el: Element): SVGGElement[] {
   return [...el.children].filter((c): c is SVGGElement => c.tagName === "g" || c.localName === "g");
 }
 
@@ -105,7 +107,7 @@ function isCommentGroup(g: Element): boolean {
 }
 
 /** Scratch 3 mouths are translated to x=16 inside the parent block. */
-function innerScripts(blockG: Element): SVGGElement[] {
+export function innerScripts(blockG: Element): SVGGElement[] {
   return groupChildren(blockG).filter((g) => {
     if (isCommentGroup(g)) {
       return false;
@@ -156,6 +158,7 @@ function walkSvgScript(
       headerH,
       chainH: h,
       line: block.source ? block.source.start.line + 1 : undefined,
+      el: g,
     };
     marks.push(mark);
     chain.push({ block, y, h, mark });

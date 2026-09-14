@@ -10,6 +10,7 @@ import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor, InspectorMutation } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
 import { hitMark, marksFromSvg, type Mark } from "./layout";
+import { paintHover, paintSelect } from "./highlight";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
@@ -23,6 +24,7 @@ let panY = 16;
 let zoom = 1;
 let libraryProto: Block | undefined;
 let dragging = false;
+let hoverKey = "";
 
 const app = document.createElement("div");
 app.id = "app";
@@ -241,9 +243,6 @@ function renderScripts(): void {
     el.style.left = `${script.x}px`;
     el.style.top = `${script.y}px`;
     el.appendChild(renderCodeSvg(script.code, SCALE));
-    el.appendChild(hl("hover"));
-    el.appendChild(hl("tail"));
-    el.appendChild(hl("select"));
     el.addEventListener("pointerdown", (event) => startBlockDrag(event, script.id));
     el.addEventListener("pointermove", (event) => {
       if (dragging) {
@@ -258,15 +257,9 @@ function renderScripts(): void {
     });
     world.appendChild(el);
   }
+  hoverKey = "";
   paintSelection();
   renderGutter();
-}
-
-function hl(kind: string): HTMLDivElement {
-  const d = document.createElement("div");
-  d.className = `hl ${kind}`;
-  d.hidden = true;
-  return d;
 }
 
 function marksForScript(script: Script): Mark[] {
@@ -359,22 +352,17 @@ function updateMutator(): void {
   }
 }
 
-function setOverlay(el: HTMLElement | null, kind: string, y: number, h: number, show: boolean): void {
-  const node = el?.querySelector(`.hl.${kind}`) as HTMLElement | null;
-  if (!node) {
-    return;
-  }
-  node.hidden = !show;
-  if (show) {
-    node.style.top = `${y - 2}px`;
-    node.style.height = `${Math.max(10, h + 4)}px`;
-  }
+function scriptSvg(scriptId: string): SVGSVGElement | null {
+  return world.querySelector(`.script[data-id="${scriptId}"] svg`) as SVGSVGElement | null;
 }
 
 function clearHover(scriptId: string): void {
-  const el = world.querySelector(`.script[data-id="${scriptId}"]`) as HTMLElement | null;
-  setOverlay(el, "hover", 0, 0, false);
-  setOverlay(el, "tail", 0, 0, false);
+  hoverKey = "";
+  const svg = scriptSvg(scriptId);
+  if (!svg) {
+    return;
+  }
+  paintHover(svg, undefined, []);
 }
 
 function hoverScript(scriptId: string, event: PointerEvent): void {
@@ -383,19 +371,19 @@ function hoverScript(scriptId: string, event: PointerEvent): void {
     return;
   }
   const worldPt = clientToWorld(event.clientX, event.clientY);
-  const hit = hitMark(marksForScript(script), worldPt.y - script.y);
-  const el = world.querySelector(`.script[data-id="${scriptId}"]`) as HTMLElement | null;
+  const marks = marksForScript(script);
+  const hit = hitMark(marks, worldPt.y - script.y);
+  const svg = scriptSvg(scriptId);
   if (!hit) {
     clearHover(scriptId);
     return;
   }
-  setOverlay(el, "hover", hit.y, hit.h, true);
-  const tailH = Math.max(0, hit.chainH - hit.h);
-  if (tailH > 8) {
-    setOverlay(el, "tail", hit.y + hit.h, tailH, true);
-  } else {
-    setOverlay(el, "tail", 0, 0, false);
+  const key = `${scriptId}:${hit.block.id}`;
+  if (hoverKey === key) {
+    return;
   }
+  hoverKey = key;
+  paintHover(svg, hit, marks);
 }
 
 function paintSelection(): void {
@@ -403,13 +391,9 @@ function paintSelection(): void {
     return;
   }
   for (const script of program.sprites[0].scripts) {
-    const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+    const svg = scriptSvg(script.id);
     const mark = selectedBlockId ? marksForScript(script).find((m) => m.block.id === selectedBlockId) : undefined;
-    if (mark) {
-      setOverlay(el, "select", mark.y, mark.h, true);
-    } else {
-      setOverlay(el, "select", 0, 0, false);
-    }
+    paintSelect(svg, mark?.block.id === selectedBlockId ? mark : undefined);
   }
 }
 
@@ -530,6 +514,7 @@ function startBlockDrag(event: PointerEvent, scriptId: string): void {
   const host = event.currentTarget as HTMLElement;
   host.setPointerCapture(event.pointerId);
   dragging = true;
+  clearHover(scriptId);
 
   const move = (ev: PointerEvent) => {
     const dist = Math.hypot(ev.clientX - px, ev.clientY - py);

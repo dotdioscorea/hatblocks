@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { layoutMarks } from "../src/webview/layout";
+import { layoutMarks, type Mark } from "../src/webview/layout";
+import { clumpGroups } from "../src/webview/highlight";
 import type { Block } from "../src/ir/types";
 
 function blk(partial: Partial<Block> & Pick<Block, "opcode" | "shape">): Block {
@@ -72,4 +73,23 @@ test("class methods are nested under the class header", () => {
   assert.equal(b.line, 5);
   assert.ok(a.y > cls.y);
   assert.ok(b.y > a.y);
+});
+
+test("clumpGroups walks the next chain, not nested mouths", () => {
+  const g1 = { id: "g1" } as unknown as SVGGElement;
+  const g2 = { id: "g2" } as unknown as SVGGElement;
+  const child = blk({ id: "child", opcode: "custom.call", shape: "stack" });
+  const a = blk({ id: "a", opcode: "py.def", shape: "c", branches: { body: child } });
+  const b = blk({ id: "b", opcode: "py.def", shape: "c" });
+  a.next = b;
+  const marks: Mark[] = [
+    { block: child, y: 10, h: 20, headerH: 20, chainH: 20, el: { id: "gchild" } as unknown as SVGGElement },
+    { block: a, y: 0, h: 80, headerH: 40, chainH: 160, el: g1 },
+    { block: b, y: 80, h: 80, headerH: 40, chainH: 80, el: g2 },
+  ];
+  const hit = marks[1];
+  const groups = clumpGroups(hit, marks);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0], g1);
+  assert.equal(groups[1], g2);
 });
