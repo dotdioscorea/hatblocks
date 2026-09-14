@@ -86,14 +86,21 @@ function render(): void {
   const hint = document.createElement("div");
   hint.className = "hint";
   hint.style.padding = "0 0 8px";
-  hint.textContent = "Click a part to add it to the open file.";
+  hint.textContent = "Drag a part onto the file. Drop on the stage or on a stack to snap.";
   flyout.appendChild(hint);
   for (const proto of cat.blocks) {
     const el = document.createElement("div");
     el.className = "proto";
     el.title = proto.opcode;
+    el.draggable = true;
     el.appendChild(renderCodeSvg(emitToolboxBlock(proto), 0.58));
-    el.addEventListener("click", () => post({ type: "insert", block: proto }));
+    el.addEventListener("dragstart", (event) => {
+      event.dataTransfer?.setData("application/json", JSON.stringify(proto));
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "copy";
+      }
+      post({ type: "dragStart", block: proto });
+    });
     flyout.appendChild(el);
   }
 }

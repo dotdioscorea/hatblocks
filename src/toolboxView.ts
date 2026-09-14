@@ -29,11 +29,14 @@ export class HatblocksToolboxProvider implements vscode.WebviewViewProvider {
           await toggleBlocksMode();
           this.hub.refreshToolbox(undefined, blocksModeEnabled());
           break;
+        case "dragStart":
+          this.hub.beginLibraryDrag(cloneBlock(msg.block, createIdFactory("ins")));
+          break;
         case "insert": {
           const block = cloneBlock(msg.block, createIdFactory("ins"));
           const ok = this.hub.insertIntoActive(block);
           if (!ok) {
-            void vscode.window.showInformationMessage("Open a C file in Blocks mode to add parts.");
+            void vscode.window.showInformationMessage("Open a supported file in Blocks mode, then drag a part onto the stage.");
           }
           break;
         }

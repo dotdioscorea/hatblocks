@@ -3,6 +3,7 @@ import type { Block, Program, SourceSpan } from "./ir/types";
 export type HostToEditor =
   | { type: "setProgram"; program: Program }
   | { type: "insert"; block: Block }
+  | { type: "libraryDrag"; block: Block }
   | { type: "requestExport" };
 
 export type EditorToHost =
@@ -18,4 +19,5 @@ export type HostToToolbox =
 export type ToolboxToHost =
   | { type: "ready" }
   | { type: "insert"; block: Block }
+  | { type: "dragStart"; block: Block }
   | { type: "toggleMode" };

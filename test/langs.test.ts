@@ -11,13 +11,25 @@ import { emitC } from "../src/emit/c";
 const wasmDir = join(process.cwd(), "wasm");
 const examples = join(process.cwd(), "examples");
 
+test("python cls.py splits class, methods, and try into separate scripts", async () => {
+  const source = readFileSync(join(examples, "cls.py"), "utf8");
+  const program = await pythonAdapter.parse(source, { fileName: "cls.py", wasmDir });
+  const roots = program.sprites[0].scripts.map((s) => s.root.opcode);
+  assert.ok(roots.includes("py.class"));
+  assert.ok(roots.filter((o) => o === "custom.define").length >= 2);
+  const code = emitProgram(program).map((s) => s.code).join("\n");
+  assert.doesNotMatch(code, /when file/);
+  assert.match(code, /class Counter|Counter/);
+});
+
 test("python hello.py lowers defs and print", async () => {
   const source = readFileSync(join(examples, "hello.py"), "utf8");
   const program = await pythonAdapter.parse(source, { fileName: "hello.py", wasmDir });
   const code = emitProgram(program).map((s) => s.code).join("\n");
   assert.ok(program.stats.scripts >= 1);
-  assert.match(code, /define/);
-  assert.match(code, /greet|print|__main__/);
+  assert.match(code, /:: custom hat|greet/);
+  assert.match(code, /print|__main__/);
+  assert.doesNotMatch(code, /clicked/);
 });
 
 test("cpp hello.cpp parses as cpp with a main hat", async () => {

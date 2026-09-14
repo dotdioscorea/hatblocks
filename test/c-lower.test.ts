@@ -24,7 +24,7 @@ test("hello.c is int main that prints hello and includes stdio", async () => {
   const program = await parseFile("hello.c");
   const code = allCode(program);
   assert.ok(program.stats.scripts >= 1);
-  assert.match(code, /when @greenFlag \[int v\] main|int main/);
+  assert.match(code, /:: events hat|int main/);
   assert.match(code, /Hello, world!/);
   assert.match(code, /#include \[stdio\.h v\]/);
 });
@@ -52,7 +52,9 @@ test("greet.c emits C function hats for helpers and main", async () => {
   const code = allCode(program);
   assert.match(code, /greet/);
   assert.match(code, /add/);
-  assert.match(code, /when @greenFlag \[int v\] main|int main/);
+  assert.match(code, /:: events hat|:: custom hat/);
+  assert.doesNotMatch(code, /\bdefine\b/);
+  assert.doesNotMatch(code, /clicked/);
 });
 
 test("toolbox is C syntax groups, not Scratch motion/sound", async () => {

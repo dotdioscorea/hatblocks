@@ -2,31 +2,42 @@ import { isLiteral } from "../ir/builders";
 import type { Block, Literal, Program } from "../ir/types";
 
 export function emitPython(program: Program): string {
+  const scripts = program.sprites.flatMap((s) => s.scripts);
   const parts: string[] = [];
-  for (const sprite of program.sprites) {
-    for (const script of sprite.scripts) {
-      const hat = script.root;
-      if (hat.opcode === "events.flag") {
-        const body = emitChain(hat.next, 1);
-        parts.push(`if __name__ == "__main__":\n${body.length ? body.join("\n") : "    pass"}`);
-        continue;
-      }
-      if (hat.opcode === "custom.define") {
-        const name = hat.fields.name || "fn";
-        const params = (hat.params ?? []).map((p) => (p.type ? `${p.name}: ${p.type}` : p.name)).join(", ");
-        const ret = hat.fields.returnType && hat.fields.returnType !== "None" ? ` -> ${hat.fields.returnType}` : "";
-        const body = emitChain(hat.next, 1);
-        parts.push(`def ${name}(${params})${ret}:\n${body.length ? body.join("\n") : "    pass"}`);
-        continue;
-      }
-      if (hat.opcode === "py.class") {
-        const name = hat.fields.name || "C";
-        const body = emitChain(hat.branches.body, 1);
-        parts.push(`class ${name}:\n${body.length ? body.join("\n") : "    pass"}`);
-        continue;
-      }
-      parts.push(emitChain(hat, 0).join("\n"));
+  const emitted = new Set<string>();
+
+  const emitDef = (hat: Block, indent: number): string => {
+    const name = hat.fields.name || "fn";
+    const params = (hat.params ?? []).map((p) => (p.type ? `${p.name}: ${p.type}` : p.name)).join(", ");
+    const ret = hat.fields.returnType && hat.fields.returnType !== "None" ? ` -> ${hat.fields.returnType}` : "";
+    const pad = "    ".repeat(indent);
+    const body = emitChain(hat.next, indent + 1);
+    return `${pad}def ${name}(${params})${ret}:\n${body.length ? body.join("\n") : `${pad}    pass`}`;
+  };
+
+  for (const script of scripts) {
+    const hat = script.root;
+    if (hat.opcode === "py.class") {
+      const name = hat.fields.name || "C";
+      const methods = scripts.filter((s) => s.root.opcode === "custom.define" && s.root.fields.parentClass === name);
+      const methodSrc = methods.map((m) => {
+        emitted.add(m.id);
+        return emitDef(m.root, 1);
+      });
+      parts.push(`class ${name}:\n${methodSrc.length ? methodSrc.join("\n\n") : "    pass"}`);
+      emitted.add(script.id);
     }
+  }
+  for (const script of scripts) {
+    if (emitted.has(script.id)) {
+      continue;
+    }
+    const hat = script.root;
+    if (hat.opcode === "custom.define") {
+      parts.push(emitDef(hat, 0));
+      continue;
+    }
+    parts.push(emitChain(hat, 0).join("\n"));
   }
   return `${parts.filter((p) => p.trim()).join("\n\n")}\n`;
 }

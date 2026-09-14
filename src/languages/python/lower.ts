@@ -24,7 +24,6 @@ class PyLowerer {
     const imports: Block[] = [];
     const toplevel: Block[] = [];
     const scripts: Script[] = [];
-    let mainHat: Block | undefined;
     for (const child of named(root)) {
       if (this.truncated) {
         break;
@@ -36,17 +35,15 @@ class PyLowerer {
         }
         continue;
       }
-      if (child.type === "function_definition" || child.type === "decorated_definition" || child.type === "class_definition") {
+      if (child.type === "function_definition" || child.type === "decorated_definition") {
         const s = this.asScript(this.lowerStmt(child));
         if (s) {
           scripts.push(s);
         }
         continue;
       }
-      if (child.type === "if_statement" && isDunderMain(child)) {
-        const hat = pyPrototype("events.flag", this.id, { source: spanOf(child) });
-        hat.next = this.lowerBlock(child.childForFieldName("consequence"));
-        mainHat = hat;
+      if (child.type === "class_definition") {
+        scripts.push(...this.lowerClassScripts(child));
         continue;
       }
       const b = this.lowerStmt(child);
@@ -74,9 +71,6 @@ class PyLowerer {
       if (head) {
         place(head);
       }
-    }
-    if (mainHat) {
-      place(mainHat);
     }
     let blocks = 0;
     for (const s of placed) {
@@ -227,14 +221,30 @@ class PyLowerer {
     return hat;
   }
 
-  private lowerClass(node: Node): Block {
+  private lowerClassScripts(node: Node): Script[] {
     const name = node.childForFieldName("name")?.text ?? "C";
-    const body = this.lowerBlock(node.childForFieldName("body"));
-    return pyPrototype("py.class", this.id, {
+    const out: Script[] = [];
+    const header = pyPrototype("py.class", this.id, {
       fields: { name },
-      branches: { body },
       source: spanOf(node),
     });
+    header.shape = "hat";
+    header.line = `class ${name} : :: custom hat`;
+    out.push({ id: this.id(), x: 0, y: 0, root: header });
+    const body = node.childForFieldName("body");
+    if (body) {
+      for (const child of named(body)) {
+        const stmt = child.type === "decorated_definition"
+          ? child.childForFieldName("definition") ?? child
+          : child;
+        if (stmt.type === "function_definition") {
+          const fn = this.lowerFunction(stmt);
+          fn.fields.parentClass = name;
+          out.push({ id: this.id(), x: 0, y: 0, root: fn });
+        }
+      }
+    }
+    return out;
   }
 
   private lowerIf(node: Node): Block {
@@ -440,12 +450,6 @@ function collapse(text: string): string {
 
 function unquote(text: string): string {
   return text.replace(/^['"]/, "").replace(/['"]$/, "");
-}
-
-function isDunderMain(node: Node): boolean {
-  const cond = node.childForFieldName("condition");
-  const text = cond?.text ?? "";
-  return text.includes("__name__") && text.includes("__main__");
 }
 
 function paramOf(node: Node): { type: string; name: string } | undefined {

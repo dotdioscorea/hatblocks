@@ -2,11 +2,13 @@ import css from "./editor.css";
 import { emitProgram } from "../emit/scratchblocks";
 import { cloneBlock, lastBlock } from "../ir/clone";
 import { createIdFactory, recomputeStats } from "../ir/ids";
-import { isLiteral } from "../ir/builders";
-import { rebuildHat } from "../library/hats";
+import { isLiteral, litEmpty } from "../ir/builders";
+import { rebuildHat, rebuildCall, C_TYPES, PY_TYPES } from "../library/hats";
+import { findBlock, unlink } from "../ir/tree";
 import type { Block, Literal, Program, Script } from "../ir/types";
 import type { EditorToHost, HostToEditor } from "../protocol";
 import { renderCodeSvg, renderBlockSvg, ensureScratchStyles } from "./render";
+import { layoutMarks, hitMark, scaleMarks, type Mark } from "./layout";
 
 const vscode = acquireVsCodeApi();
 const SCALE = 0.72;
@@ -14,9 +16,11 @@ const SNAP = 22;
 
 let program: Program | undefined;
 let selectedId: string | undefined;
+let selectedBlockId: string | undefined;
 let panX = 16;
 let panY = 16;
 let zoom = 1;
+let libraryProto: Block | undefined;
 
 const app = document.createElement("div");
 app.id = "app";
@@ -37,9 +41,19 @@ app.innerHTML = `
         </svg>
       </button>
       <div class="stats" id="stats"></div>
+      <div class="mutator" id="mutator">
+        <span class="label" id="mutatorLabel"></span>
+        <button type="button" id="addArg">+ arg</button>
+        <button type="button" id="delArg">− arg</button>
+      </div>
     </div>
-    <div class="hint">Scratch blocks on a VS Code editor. Sidebar is the parts palette. Double-click a value to edit.</div>
+    <div class="hint">Drag a block to tear it off. Snap to the glowing notch. Library parts drag in from the sidebar.</div>
+    <svg class="snap-notch" id="snapNotch" width="200" height="20"></svg>
   </div>
+  <aside class="inspector" id="inspector">
+    <h3>Inspector</h3>
+    <div id="inspectorBody"><p class="muted">Select a block.</p></div>
+  </aside>
 `;
 document.body.appendChild(app);
 const style = document.createElement("style");
@@ -68,11 +82,15 @@ window.addEventListener("message", (event: MessageEvent<HostToEditor>) => {
   if (msg.type === "setProgram") {
     program = msg.program;
     selectedId = undefined;
+    selectedBlockId = undefined;
     packOnce = true;
     renderAll();
   }
   if (msg.type === "insert") {
     insertBlock(msg.block);
+  }
+  if (msg.type === "libraryDrag") {
+    libraryProto = msg.block;
   }
   if (msg.type === "requestExport") {
     void exportPng();
@@ -80,6 +98,38 @@ window.addEventListener("message", (event: MessageEvent<HostToEditor>) => {
 });
 
 $("run").addEventListener("click", () => post({ type: "run" }));
+$("addArg").addEventListener("click", () => mutateSelected(1));
+$("delArg").addEventListener("click", () => mutateSelected(-1));
+
+const canvasEl = document.querySelector(".canvas") as HTMLElement;
+canvasEl.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "copy";
+  }
+  const worldPt = clientToWorld(event.clientX, event.clientY);
+  const dummy: Script = { id: "ghost", x: worldPt.x, y: worldPt.y, root: libraryProto ?? ({ shape: "stack" } as Block) };
+  showSnap(dummy);
+});
+canvasEl.addEventListener("drop", (event) => {
+  event.preventDefault();
+  hideSnap();
+  let proto = libraryProto;
+  const raw = event.dataTransfer?.getData("application/json");
+  if (raw) {
+    try {
+      proto = JSON.parse(raw) as Block;
+    } catch {
+      /* keep hub payload */
+    }
+  }
+  if (!proto) {
+    return;
+  }
+  const worldPt = clientToWorld(event.clientX, event.clientY);
+  insertBlockAt(proto, worldPt.x, worldPt.y);
+  libraryProto = undefined;
+});
 
 stageWrap.addEventListener("wheel", (event) => {
   event.preventDefault();
@@ -132,6 +182,7 @@ function renderAll(): void {
     program.sprites.push({ name: program.fileName, scripts: [] });
   }
   $("stats").textContent = `${program.stats.scripts} scripts · ${program.stats.blocks} blocks`;
+  updateMutator();
   renderScripts();
   if (packOnce) {
     packOnce = false;
@@ -173,7 +224,7 @@ function renderScripts(): void {
     el.style.left = `${script.x}px`;
     el.style.top = `${script.y}px`;
     el.appendChild(renderCodeSvg(script.code, SCALE));
-    el.addEventListener("pointerdown", (event) => startScriptDrag(event, script.id));
+    el.addEventListener("pointerdown", (event) => startBlockDrag(event, script.id));
     el.addEventListener("dblclick", (event) => {
       event.preventDefault();
       editScript(script.id);
@@ -183,35 +234,11 @@ function renderScripts(): void {
   renderGutter();
 }
 
-const HAT_H = 42;
-const STACK_H = 36;
-const C_HEAD = 38;
-const C_ELSE = 22;
-const C_FOOT = 18;
-
-function layoutMarks(block: Block | undefined, y: number, marks: { line?: number; y: number }[]): number {
-  let cursor = y;
-  while (block) {
-    if (block.shape !== "reporter" && block.shape !== "boolean") {
-      marks.push({
-        line: block.source ? block.source.start.line + 1 : undefined,
-        y: cursor,
-      });
-    }
-    if (block.shape === "c" || block.shape === "c2") {
-      let inner = cursor + C_HEAD;
-      inner = layoutMarks(block.branches.body, inner, marks);
-      if (block.shape === "c2") {
-        inner += C_ELSE;
-        inner = layoutMarks(block.branches.else, inner, marks);
-      }
-      cursor = inner + C_FOOT;
-    } else {
-      cursor += block.shape === "hat" ? HAT_H : STACK_H;
-    }
-    block = block.next;
-  }
-  return cursor;
+function marksForScript(script: Script): Mark[] {
+  const laid = layoutMarks(script.root, 0);
+  const el = world.querySelector(`.script[data-id="${script.id}"]`) as HTMLElement | null;
+  const svgH = el?.offsetHeight ?? laid.height;
+  return scaleMarks(laid.marks, laid.height, svgH);
 }
 
 function renderGutter(): void {
@@ -220,71 +247,317 @@ function renderGutter(): void {
     return;
   }
   gutter.innerHTML = "";
-  const seen = new Set<number>();
   for (const script of program.sprites[0].scripts) {
-    const marks: { line?: number; y: number }[] = [];
-    layoutMarks(script.root, 0, marks);
-    for (const mark of marks) {
-      if (mark.line !== undefined && seen.has(mark.line)) {
+    for (const mark of marksForScript(script)) {
+      if (mark.line === undefined) {
         continue;
       }
-      if (mark.line !== undefined) {
-        seen.add(mark.line);
-      }
       const n = document.createElement("div");
-      n.className = `ln${script.id === selectedId ? " active" : ""}${mark.line === undefined ? " empty" : ""}`;
-      n.textContent = mark.line !== undefined ? String(mark.line) : "·";
-      n.title = mark.line !== undefined ? `Line ${mark.line}` : "Not in source yet";
+      n.className = `ln${mark.block.id === selectedBlockId ? " active" : ""}`;
+      n.textContent = String(mark.line);
+      n.title = `Line ${mark.line}`;
       n.style.top = `${panY + (script.y + mark.y) * zoom}px`;
-      n.style.height = `${Math.max(16, STACK_H * zoom)}px`;
+      n.style.height = `${Math.max(14, mark.h * zoom)}px`;
       n.style.paddingTop = `${Math.max(0, 2 * zoom)}px`;
       gutter.appendChild(n);
     }
   }
 }
 
+function clientToWorld(cx: number, cy: number): { x: number; y: number } {
+  const canvas = document.querySelector(".canvas")!.getBoundingClientRect();
+  return {
+    x: (cx - canvas.left - panX) / zoom,
+    y: (cy - canvas.top - panY) / zoom,
+  };
+}
+
 function findScript(id: string): Script | undefined {
   return program?.sprites[0]?.scripts.find((s) => s.id === id);
 }
 
-function startScriptDrag(event: PointerEvent, id: string): void {
+function selectedRoot(): Block | undefined {
+  if (!selectedId) {
+    return undefined;
+  }
+  const script = findScript(selectedId);
+  if (!script) {
+    return undefined;
+  }
+  if (selectedBlockId) {
+    return findBlock(script.root, selectedBlockId) ?? script.root;
+  }
+  return script.root;
+}
+
+function isHat(block: Block): boolean {
+  return block.opcode === "events.flag" || block.opcode === "custom.define";
+}
+
+function isCall(block: Block): boolean {
+  return block.opcode === "custom.call" || block.opcode === "custom.reporter" || block.opcode === "looks.printf";
+}
+
+function updateMutator(): void {
+  const bar = $("mutator");
+  const label = $("mutatorLabel");
+  const root = selectedRoot();
+  if (!root || (!isHat(root) && !isCall(root))) {
+    bar.classList.remove("show");
+    renderInspector();
+    return;
+  }
+  bar.classList.add("show");
+  if (isHat(root)) {
+    const n = root.params?.length ?? 0;
+    label.textContent = n === 1 ? "1 parameter" : `${n} parameters`;
+  } else {
+    const n = root.extraArgs?.length ?? 0;
+    label.textContent = n === 1 ? "1 argument" : `${n} arguments`;
+  }
+  renderInspector();
+}
+
+function typeOptions(current: string): string {
+  const types = program?.language === "python" ? PY_TYPES.filter(Boolean) : C_TYPES;
+  const all = types.includes(current) ? types : [current, ...types];
+  return all.map((t) => `<option value="${escapeAttr(t)}"${t === current ? " selected" : ""}>${escapeAttr(t)}</option>`).join("");
+}
+
+function escapeAttr(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]!));
+}
+
+function renderInspector(): void {
+  const body = document.getElementById("inspectorBody");
+  if (!body) {
+    return;
+  }
+  const block = selectedRoot();
+  if (!block) {
+    body.innerHTML = `<p class="muted">Select a block.</p>`;
+    return;
+  }
+  const bits: string[] = [`<p><b>${escapeAttr(block.opcode)}</b></p>`];
+  if (block.source) {
+    bits.push(`<p class="muted">Line ${block.source.start.line + 1}</p>`);
+  }
+  if (isHat(block) || block.opcode === "py.class") {
+    bits.push(`<label>Return / kind</label><select id="inspRet">${typeOptions(block.fields.returnType || block.fields.type || "int")}</select>`);
+    bits.push(`<label>Name</label><input id="inspName" value="${escapeAttr(block.fields.name || "")}" />`);
+    bits.push(`<label>Parameters</label>`);
+    for (const [i, p] of (block.params ?? []).entries()) {
+      bits.push(`<div class="row"><select data-pi="${i}">${typeOptions(p.type)}</select><input data-pn="${i}" value="${escapeAttr(p.name)}" /></div>`);
+    }
+    bits.push(`<button type="button" id="inspAdd">+ parameter</button>`);
+  } else if (isCall(block)) {
+    bits.push(`<label>Callee</label><input id="inspName" value="${escapeAttr(block.fields.name || "")}" />`);
+    bits.push(`<p class="muted">${block.extraArgs?.length ?? 0} argument slots</p>`);
+    bits.push(`<button type="button" id="inspAdd">+ argument</button> <button type="button" id="inspDel">− argument</button>`);
+  } else if (block.fields.type || block.fields.var || block.fields.header) {
+    if (block.fields.type) {
+      bits.push(`<label>Type</label><select id="inspRet">${typeOptions(block.fields.type)}</select>`);
+    }
+    if (block.fields.var) {
+      bits.push(`<label>Name</label><input id="inspName" value="${escapeAttr(block.fields.var)}" />`);
+    }
+    if (block.fields.header) {
+      bits.push(`<label>Header</label><input id="inspName" value="${escapeAttr(block.fields.header)}" />`);
+    }
+  } else {
+    bits.push(`<p class="muted">This block has no extra controls. Drag to detach. Snap to join.</p>`);
+  }
+  body.innerHTML = bits.join("");
+  body.querySelector("#inspRet")?.addEventListener("change", (e) => {
+    const v = (e.target as HTMLSelectElement).value;
+    if (isHat(block)) {
+      block.fields.returnType = v;
+      rebuildHat(block);
+    } else if (block.fields.type !== undefined) {
+      block.fields.type = v;
+    }
+    commit();
+  });
+  body.querySelector("#inspName")?.addEventListener("change", (e) => {
+    const v = (e.target as HTMLInputElement).value;
+    if (isHat(block) || isCall(block)) {
+      block.fields.name = v;
+      if (isHat(block)) {
+        rebuildHat(block);
+      } else {
+        rebuildCall(block);
+      }
+    } else if (block.fields.var !== undefined) {
+      block.fields.var = v;
+    } else if (block.fields.header !== undefined) {
+      block.fields.header = v;
+    }
+    commit();
+  });
+  body.querySelectorAll("select[data-pi]").forEach((el) => {
+    el.addEventListener("change", (e) => {
+      const i = Number((e.target as HTMLSelectElement).dataset.pi);
+      if (block.params?.[i]) {
+        block.params[i].type = (e.target as HTMLSelectElement).value;
+        rebuildHat(block);
+        commit();
+      }
+    });
+  });
+  body.querySelectorAll("input[data-pn]").forEach((el) => {
+    el.addEventListener("change", (e) => {
+      const i = Number((e.target as HTMLInputElement).dataset.pn);
+      if (block.params?.[i]) {
+        block.params[i].name = (e.target as HTMLInputElement).value;
+        rebuildHat(block);
+        commit();
+      }
+    });
+  });
+  body.querySelector("#inspAdd")?.addEventListener("click", () => mutateSelected(1));
+  body.querySelector("#inspDel")?.addEventListener("click", () => mutateSelected(-1));
+}
+
+function mutateSelected(delta: number): void {
+  const root = selectedRoot();
+  if (!root) {
+    return;
+  }
+  if (isHat(root)) {
+    root.params = root.params ?? [];
+    if (delta > 0) {
+      const n = root.params.length + 1;
+      const type = window.prompt("Parameter type", root.params.at(-1)?.type || "int");
+      if (type === null) {
+        return;
+      }
+      const name = window.prompt("Parameter name", `arg${n}`);
+      if (name === null) {
+        return;
+      }
+      root.params.push({ type: type.trim() || "int", name: name.trim() || `arg${n}` });
+    } else if (root.params.length) {
+      root.params.pop();
+    }
+    rebuildHat(root);
+    commit();
+    return;
+  }
+  if (isCall(root)) {
+    root.extraArgs = root.extraArgs ?? [];
+    if (delta > 0) {
+      root.extraArgs.push(litEmpty());
+    } else if (root.extraArgs.length) {
+      root.extraArgs.pop();
+    }
+    rebuildCall(root);
+    commit();
+  }
+}
+
+function startBlockDrag(event: PointerEvent, scriptId: string): void {
   event.stopPropagation();
   event.preventDefault();
-  selectedId = id;
-  const script = findScript(id);
+  const script = findScript(scriptId);
   if (!script || !program) {
     return;
   }
-  const el = event.currentTarget as HTMLElement;
-  el.classList.add("dragging", "selected");
+  const worldPt = clientToWorld(event.clientX, event.clientY);
+  const hit = hitMark(marksForScript(script), worldPt.y - script.y);
+  const origin = hit?.block ?? script.root;
+  selectedId = scriptId;
+  selectedBlockId = origin.id;
+  updateMutator();
+  renderInspector();
+
+  let dragScript = script;
+  let split = false;
   const startX = script.x;
   const startY = script.y;
   const px = event.clientX;
   const py = event.clientY;
-  el.setPointerCapture(event.pointerId);
+  const host = event.currentTarget as HTMLElement;
+  host.setPointerCapture(event.pointerId);
+
   const move = (ev: PointerEvent) => {
-    script.x = startX + (ev.clientX - px) / zoom;
-    script.y = startY + (ev.clientY - py) / zoom;
-    el.style.left = `${script.x}px`;
-    el.style.top = `${script.y}px`;
-    showSnap(script);
+    const dist = Math.hypot(ev.clientX - px, ev.clientY - py);
+    if (!split && dist > 8 && origin !== script.root) {
+      unlink(script.root, origin);
+      const placed = clientToWorld(ev.clientX, ev.clientY);
+      dragScript = { id: createIdFactory("s")(), x: placed.x, y: placed.y, root: origin };
+      program!.sprites[0].scripts.push(dragScript);
+      selectedId = dragScript.id;
+      selectedBlockId = origin.id;
+      split = true;
+      renderScripts();
+      updateMutator();
+      renderInspector();
+    }
+    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
+    if (!el) {
+      return;
+    }
+    el.classList.add("dragging", "selected");
+    if (split) {
+      const pt = clientToWorld(ev.clientX, ev.clientY);
+      dragScript.x = pt.x;
+      dragScript.y = pt.y;
+    } else {
+      dragScript.x = startX + (ev.clientX - px) / zoom;
+      dragScript.y = startY + (ev.clientY - py) / zoom;
+    }
+    const snap = snapTarget(dragScript);
+    if (snap) {
+      const tEl = world.querySelector(`.script[data-id="${snap.id}"]`) as HTMLElement | null;
+      if (tEl) {
+        dragScript.x = snap.x;
+        dragScript.y = snap.y + tEl.offsetHeight - 10;
+      }
+    }
+    el.style.left = `${dragScript.x}px`;
+    el.style.top = `${dragScript.y}px`;
+    showSnap(dragScript);
     renderGutter();
   };
   const up = () => {
-    el.classList.remove("dragging");
-    el.removeEventListener("pointermove", move);
-    el.removeEventListener("pointerup", up);
-    const target = snapTarget(script);
+    host.removeEventListener("pointermove", move);
+    host.removeEventListener("pointerup", up);
+    const el = world.querySelector(`.script[data-id="${dragScript.id}"]`) as HTMLElement | null;
+    el?.classList.remove("dragging");
+    const target = snapTarget(dragScript);
     hideSnap();
     if (target) {
-      attach(target, script);
+      attach(target, dragScript);
+    } else if (split) {
+      commit();
     } else {
       renderScripts();
       applyPan();
     }
   };
-  el.addEventListener("pointermove", move);
-  el.addEventListener("pointerup", up);
+  host.addEventListener("pointermove", move);
+  host.addEventListener("pointerup", up);
+}
+
+function insertBlockAt(proto: Block, x: number, y: number): void {
+  if (!program) {
+    return;
+  }
+  if (!program.sprites[0]) {
+    program.sprites.push({ name: program.fileName || "file", scripts: [] });
+  }
+  const root = cloneBlock(proto);
+  const dummy: Script = { id: "drop", x, y, root };
+  const target = snapTarget(dummy);
+  if (target && root.shape !== "hat") {
+    lastBlock(target.root).next = root;
+    commit();
+    return;
+  }
+  program.sprites[0].scripts.push({ id: createIdFactory("s")(), x, y, root });
+  selectedId = program.sprites[0].scripts.at(-1)!.id;
+  selectedBlockId = root.id;
+  commit();
 }
 
 function insertBlock(proto: Block): void {
@@ -376,23 +649,32 @@ function snapTarget(moving: Script): Script | undefined {
 }
 
 function showSnap(moving: Script): void {
+  const notch = document.getElementById("snapNotch") as SVGSVGElement | null;
   const target = snapTarget(moving);
-  if (!target) {
+  if (!target || !notch) {
     hideSnap();
     return;
   }
   const el = world.querySelector(`.script[data-id="${target.id}"]`) as HTMLElement | null;
   if (!el) {
+    hideSnap();
     return;
   }
-  guide.classList.add("show");
-  guide.style.left = `${target.x}px`;
-  guide.style.top = `${target.y + el.offsetHeight - 4}px`;
-  guide.style.width = `${Math.max(80, el.offsetWidth * 0.7)}px`;
+  const w = Math.max(80, el.offsetWidth * 0.85);
+  const x = panX + target.x * zoom;
+  const y = panY + (target.y + el.offsetHeight - 6) * zoom;
+  notch.setAttribute("width", String(w));
+  notch.setAttribute("height", "16");
+  notch.style.left = `${x}px`;
+  notch.style.top = `${y}px`;
+  notch.innerHTML = `<path d="M0 4 H12 C16 4 16 12 22 12 H36 C42 12 42 4 48 4 H${w}" fill="none" stroke="#fff04d" stroke-width="3" stroke-linecap="round"/>`;
+  notch.classList.add("show");
+  guide.classList.remove("show");
 }
 
 function hideSnap(): void {
   guide.classList.remove("show");
+  document.getElementById("snapNotch")?.classList.remove("show");
 }
 
 function editScript(scriptId: string): void {

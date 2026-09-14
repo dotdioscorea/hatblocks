@@ -79,13 +79,14 @@ html, body {
 }
 .proto {
   margin: 0 0 10px;
-  cursor: pointer;
+  cursor: grab;
   width: max-content;
   max-width: 100%;
   padding: 6px;
   border-radius: 6px;
   background: #e9f1fc;
 }
+.proto:active { cursor: grabbing; }
 .proto:hover { outline: 1px solid var(--vscode-focusBorder); }
 .hint, .empty {
   padding: 10px;

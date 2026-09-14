@@ -52,6 +52,8 @@ export function emitC(program: Program): string {
         functions.push(emitDefined(hat, needed));
       } else if (hat.opcode === "control.label") {
         functions.push(emitFunction(sanitizeIdent(hat.fields.label || "label"), [], hat.next, { needed, isMain: false, returnType: "void" }));
+      } else if (hat.opcode === "cpp.class") {
+        functions.push(emitStatement(hat, needed, false, 0).join("\n"));
       }
     }
   }
@@ -82,7 +84,7 @@ function harvestTopLevel(
   root: Block,
   into: { includes: string[]; macros: string[]; globals: string[]; functions: string[]; needed: Set<string>; isMain: boolean },
 ): void {
-  if (root.opcode === "events.flag" || root.opcode === "custom.define" || root.opcode === "control.label") {
+  if (root.opcode === "events.flag" || root.opcode === "custom.define" || root.opcode === "control.label" || root.opcode === "cpp.class") {
     return;
   }
   let current: Block | undefined = root;
@@ -184,6 +186,13 @@ function emitRepeatAsFor(block: Block, needed: Set<string>, isMain: boolean, ind
 function emitStatement(block: Block, needed: Set<string>, isMain: boolean, indent: number): string[] {
   const pad = "  ".repeat(indent);
   switch (block.opcode) {
+    case "cpp.class":
+      return [
+        `${pad}class ${block.fields.name || "T"} {`,
+        `${pad}public:`,
+        ...emitChain(block.branches.body, needed, isMain, indent + 1),
+        `${pad}};`,
+      ];
     case "c.include":
     case "c.defineMacro":
     case "events.flag":

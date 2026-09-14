@@ -1,4 +1,4 @@
-/** Scratch-like hat labels that still carry real types and arguments. */
+/** Rounded-top hats (Scratch flag/define *shape*) with language-native labels. */
 
 export interface FnParam {
   type: string;
@@ -31,15 +31,11 @@ export function hatLine(
   params: FnParam[] = [],
 ): string {
   const ret = `[${cleanType(returnType)} v]`;
-  const args = params
-    .map((p) => `( [${cleanType(p.type)} v] ${cleanIdent(p.name)} )`)
-    .join(" ");
-  if (kind === "when") {
-    return args
-      ? `when @greenFlag ${ret} ${cleanIdent(name)} ${args}`
-      : `when @greenFlag ${ret} ${cleanIdent(name)}`;
-  }
-  return args ? `define ${ret} ${cleanIdent(name)} ${args}` : `define ${ret} ${cleanIdent(name)}`;
+  const args = params.map((p) => `[${cleanType(p.type)} v] ${cleanIdent(p.name)}`).join(" , ");
+  const sig = args ? `${ret} ${cleanIdent(name)} ( ${args} )` : `${ret} ${cleanIdent(name)}`;
+  // scratchblocks: `:: events hat` is the rounded-top flag shape, without "when/clicked".
+  const shape = kind === "when" ? "events hat" : "custom hat";
+  return `${sig} :: ${shape}`;
 }
 
 export function cleanType(type: string): string {
@@ -47,7 +43,7 @@ export function cleanType(type: string): string {
 }
 
 function cleanIdent(name: string): string {
-  return name.replace(/[^\w*]/g, "") || "fn";
+  return name.replace(/[^\w]/g, "") || "fn";
 }
 
 export function rebuildHat(block: {
@@ -60,4 +56,9 @@ export function rebuildHat(block: {
   const ret = block.fields.returnType || "int";
   const kind = block.opcode === "events.flag" ? "when" : "define";
   block.line = hatLine(kind, ret, name, block.params ?? []);
+}
+
+export function rebuildCall(block: { fields: Record<string, string>; line: string; extraArgs?: unknown[] }): void {
+  const name = block.fields.name || "fn";
+  block.line = `${name} :: custom`;
 }

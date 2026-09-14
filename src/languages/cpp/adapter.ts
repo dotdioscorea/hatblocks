@@ -43,11 +43,5 @@ function emitCpp(program: Program): string {
   if (!classes.length) {
     return c.replace(/#include <stdio.h>/g, "#include <iostream>");
   }
-  const extra = classes
-    .map((s) => {
-      const name = s.root.fields.name || "T";
-      return `class ${name} {\npublic:\n};\n`;
-    })
-    .join("\n");
-  return `${extra}\n${c}`;
+  return c;
 }

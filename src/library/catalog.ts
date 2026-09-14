@@ -32,12 +32,12 @@ export const CATALOG: OpcodeDef[] = [
   },
 
   // Functions
-  { opcode: "events.flag", shape: "hat", category: "custom", line: "when @greenFlag [int v] main" },
+  { opcode: "events.flag", shape: "hat", category: "custom", line: "[int v] main :: events hat" },
   {
     opcode: "custom.define",
     shape: "hat",
     category: "custom",
-    line: "define [void v] fn",
+    line: "[void v] fn :: custom hat",
     fields: { name: "fn", returnType: "void" },
   },
   { opcode: "custom.call", shape: "stack", category: "custom", line: "{name} :: custom", fields: { name: "fn" }, hidden: true },

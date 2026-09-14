@@ -18,9 +18,8 @@ export interface OpcodeDef {
 export const PY_CATALOG: OpcodeDef[] = [
   { opcode: "py.import", shape: "stack", category: "extension", line: "import [{module} v]", fields: { module: "sys" } },
   { opcode: "py.importFrom", shape: "stack", category: "extension", line: "from [{module} v] import [{name} v]", fields: { module: "os", name: "path" } },
-  { opcode: "events.flag", shape: "hat", category: "custom", line: "when @greenFlag [__name__ == \"__main__\" v]" },
-  { opcode: "custom.define", shape: "hat", category: "custom", line: "define {name}", fields: { name: "fn" } },
-  { opcode: "py.class", shape: "c", category: "custom", line: "class [{name} v]:", fields: { name: "C" }, branchSlots: ["body"], closer: "end" },
+  { opcode: "custom.define", shape: "hat", category: "custom", line: "[None v] fn :: custom hat", fields: { name: "fn", returnType: "None" } },
+  { opcode: "py.class", shape: "hat", category: "custom", line: "class [{name} v] : :: custom hat", fields: { name: "C" } },
   { opcode: "control.if", shape: "c", category: "control", line: "if {condition} then", valueSlots: ["condition"], branchSlots: ["body"] },
   { opcode: "control.ifElse", shape: "c2", category: "control", line: "if {condition} then", valueSlots: ["condition"], branchSlots: ["body", "else"] },
   { opcode: "control.while", shape: "c", category: "control", line: "while {condition} {", valueSlots: ["condition"], branchSlots: ["body"], closer: "} :: control" },

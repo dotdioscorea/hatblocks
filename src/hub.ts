@@ -12,6 +12,7 @@ export interface EditorSession {
 export class HatblocksHub {
   private readonly editors = new Map<string, EditorSession>();
   private toolbox: vscode.Webview | undefined;
+  private dragPayload: Block | undefined;
 
   registerEditor(session: EditorSession): vscode.Disposable {
     this.editors.set(session.uri.toString(), session);
@@ -38,6 +39,18 @@ export class HatblocksHub {
       return this.editors.get(input.uri.toString());
     }
     return [...this.editors.values()][0];
+  }
+
+  beginLibraryDrag(block: Block): void {
+    this.dragPayload = block;
+    const editor = this.activeEditor();
+    editor?.post({ type: "libraryDrag", block });
+  }
+
+  takeLibraryDrag(): Block | undefined {
+    const block = this.dragPayload;
+    this.dragPayload = undefined;
+    return block;
   }
 
   insertIntoActive(block: Block): boolean {
